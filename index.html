@@ -1751,38 +1751,62 @@ function renderDashboard(){
   }).join("") : `<div class="empty subtle">Nada pendiente</div>`;
 }
 
-/* ---------- INFORMES: manejo de semanas (corte sábado-viernes 5:00 p.m.) ---------- */
-// Devuelve {inicio, fin} donde fin es el viernes 5:00pm que cierra la semana que contiene "d",
-// e inicio es el viernes 5:00pm anterior (equivalente a sábado 00:00 en la práctica).
-function periodoDeFecha(d){
-  let fin = new Date(d);
-  fin.setHours(17,0,0,0);
-  const dow = fin.getDay(); // 0=dom,...,5=vie,6=sab
-  let diffAViernes = (5 - dow + 7) % 7;
-  fin.setDate(fin.getDate() + diffAViernes);
-  if(fin <= d){ fin = new Date(fin); fin.setDate(fin.getDate()+7); }
-  const inicio = new Date(fin);
-  inicio.setDate(inicio.getDate()-7);
-  return { inicio, fin };
-}
-let semanaOffset = 0; // 0 = semana actual, -1 = anterior, +1 = siguiente
-function periodoActual(){
-  const base = periodoDeFecha(new Date());
-  const inicio = new Date(base.inicio); inicio.setDate(inicio.getDate() + 7*semanaOffset);
-  const fin = new Date(base.fin); fin.setDate(fin.getDate() + 7*semanaOffset);
-  return { inicio, fin };
-}
-function fmtFechaLarga(d){
-  return d.toLocaleDateString("es-CO",{day:"2-digit",month:"2-digit",year:"numeric"});
-}
-function enPeriodo(fechaIso, periodo){
+/* ---------- INFORMES: utilidades de fecha (mes / semana dentro del mes) ---------- */
+const MESES_ES = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
+function fmtFechaLarga(d){ return d.toLocaleDateString("es-CO",{day:"2-digit",month:"2-digit",year:"numeric"}); }
+function dentroDe(fechaIso, inicio, fin){
   if(!fechaIso) return false;
   const f = new Date(fechaIso);
-  return f > periodo.inicio && f <= periodo.fin;
+  return f >= inicio && f <= fin;
 }
+function rangoSemanaEnMes(anio, mesIdx, semanaN){
+  const diasEnMes = new Date(anio, mesIdx+1, 0).getDate();
+  let dIni, dFin;
+  if(semanaN===1){ dIni=1; dFin=7; }
+  else if(semanaN===2){ dIni=8; dFin=14; }
+  else if(semanaN===3){ dIni=15; dFin=21; }
+  else { dIni=22; dFin=diasEnMes; }
+  return { inicio: new Date(anio, mesIdx, dIni, 0,0,0), fin: new Date(anio, mesIdx, dFin, 23,59,59) };
+}
+function rangoMes(anio, mesIdx){
+  return { inicio: new Date(anio, mesIdx, 1, 0,0,0), fin: new Date(anio, mesIdx+1, 0, 23,59,59) };
+}
+function poblarAnioMes(selAnio, selMes){
+  const hoy = new Date().getFullYear();
+  selAnio.innerHTML = [hoy-1, hoy, hoy+1].map(a=>`<option value="${a}">${a}</option>`).join("");
+  selAnio.value = hoy;
+  selMes.innerHTML = MESES_ES.map((m,i)=>`<option value="${i}">${m}</option>`).join("");
+  selMes.value = new Date().getMonth();
+}
+poblarAnioMes(document.getElementById("sec-anio"), document.getElementById("sec-mes"));
+poblarAnioMes(document.getElementById("ter-anio"), document.getElementById("ter-mes"));
+document.getElementById("sec-semana").innerHTML = [1,2,3,4].map(n=>`<option value="${n}">Semana ${n}</option>`).join("");
 
-document.getElementById("inf-semana-prev").addEventListener("click", ()=>{ semanaOffset--; renderInformes(); });
-document.getElementById("inf-semana-next").addEventListener("click", ()=>{ semanaOffset++; renderInformes(); });
+function renderInformeSecretaria(){
+  const anio = Number(document.getElementById("sec-anio").value);
+  const mes = Number(document.getElementById("sec-mes").value);
+  const semana = Number(document.getElementById("sec-semana").value);
+  const periodo = rangoSemanaEnMes(anio, mes, semana);
+  document.getElementById("sec-rango").textContent = `${fmtFechaLarga(periodo.inicio)} — ${fmtFechaLarga(periodo.fin)}`;
+  const ingresos = db.vehiculos.filter(v=>dentroDe(v.gruaFecha, periodo.inicio, periodo.fin));
+  const salidas = db.vehiculos.filter(v=>dentroDe(v.salidaFecha, periodo.inicio, periodo.fin));
+  document.getElementById("sec-ingresos").textContent = ingresos.length;
+  document.getElementById("sec-salidas").textContent = salidas.length;
+  return { periodo, ingresos, salidas };
+}
+["sec-anio","sec-mes","sec-semana"].forEach(id=>document.getElementById(id).addEventListener("change", renderInformeSecretaria));
+
+function renderInformeTerceros(){
+  const anio = Number(document.getElementById("ter-anio").value);
+  const mes = Number(document.getElementById("ter-mes").value);
+  const periodo = rangoMes(anio, mes);
+  const salidas = db.vehiculos.filter(v=>dentroDe(v.salidaFecha, periodo.inicio, periodo.fin) && v.operadorId);
+  const totalNeto = salidas.reduce((s,v)=> s + calcularCostos(v).gruaNeta, 0);
+  document.getElementById("ter-salidas").textContent = salidas.length;
+  document.getElementById("ter-total").textContent = fmt(totalNeto);
+  return { periodo, salidas };
+}
+["ter-anio","ter-mes"].forEach(id=>document.getElementById(id).addEventListener("change", renderInformeTerceros));
 
 function renderInformes(){
   const puedeVer = sesion && (sesion.rol === "admin" || sesion.rol === "administrador");
@@ -1797,14 +1821,8 @@ function renderInformes(){
   document.getElementById("inf-accidente").textContent = accidente;
   document.getElementById("inf-comparendo").textContent = comparendo;
 
-  const periodo = periodoActual();
-  document.getElementById("inf-semana-label").textContent =
-    `${fmtFechaLarga(periodo.inicio)} — ${fmtFechaLarga(periodo.fin)} (5:00 p.m.)` + (semanaOffset===0 ? "  · semana actual" : "");
-
-  const salidas = todos.filter(v=>enPeriodo(v.salidaFecha, periodo));
-  let totalSemana = 0;
-  salidas.filter(v=>v.operadorId).forEach(v=>{ totalSemana += calcularCostos(v).gruaNeta; });
-  document.getElementById("pago-semana-total").textContent = fmt(totalSemana);
+  renderInformeSecretaria();
+  renderInformeTerceros();
 }
 
 /* ---------- INFORMES: generación de PDFs ---------- */
@@ -1925,30 +1943,66 @@ async function descargarPDFsLista(lista, botonId){
   toast("Descarga de inventarios completa");
 }
 
-document.getElementById("btn-pdf-pago-semana").addEventListener("click", ()=>{
-  const periodo = periodoActual();
-  const salidas = db.vehiculos.filter(v=>enPeriodo(v.salidaFecha, periodo) && v.operadorId);
-  if(!salidas.length){ toast("No hay pagos que reportar en esta semana"); return; }
+document.getElementById("btn-pdf-secretaria").addEventListener("click", ()=>{
+  const { periodo, salidas } = renderInformeSecretaria();
+  if(!salidas.length){ toast("No hay vehículos con salida en esta semana"); return; }
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({unit:"pt", format:"a4"});
   const mx = 40, ancho = 595;
-
   doc.setFillColor(28,31,34); doc.rect(0,0,ancho,66,"F");
   doc.setFillColor(255,200,46); doc.rect(0,66,ancho,4,"F");
   doc.setTextColor(255,255,255); doc.setFont("helvetica","bold"); doc.setFontSize(16);
   doc.text("GÓMEZ NIETO", mx, 32);
   doc.setFont("helvetica","normal"); doc.setFontSize(9.5); doc.setTextColor(200,203,206);
-  doc.text("Reporte de pago semanal a operadores de grúa", mx, 48);
-  doc.text(`${fmtFechaLarga(periodo.inicio)} — ${fmtFechaLarga(periodo.fin)} (corte 5:00 p.m. viernes)`, ancho-mx, 48, {align:"right"});
+  doc.text("Informe semanal para Secretaría de Tránsito", mx, 48);
+  doc.text(`${fmtFechaLarga(periodo.inicio)} — ${fmtFechaLarga(periodo.fin)}`, ancho-mx, 48, {align:"right"});
+  doc.setTextColor(0,0,0);
+
+  let totalSecretaria = 0;
+  const filas = salidas.map(v=>{
+    const t = tarifaDe(v.tipoId); const c = calcularCostos(v);
+    totalSecretaria += c.secretaria;
+    return [v.placa, t?t.nombre:"—", motivoLabel(v.motivo), fechaCorta(v.salidaFecha), fmt(c.total), fmt(c.secretaria)];
+  });
+  doc.autoTable({
+    startY: 92,
+    margin: {left:mx, right:mx},
+    head: [["Placa","Tipo","Motivo","Salió","Total cobrado","10% Secretaría"]],
+    body: filas,
+    theme: "striped",
+    styles: { font:"helvetica", fontSize:8.5, cellPadding:5, textColor:[30,30,30], lineColor:[225,225,225], lineWidth:0.4 },
+    headStyles: { fillColor:[28,31,34], textColor:255, fontStyle:"bold", fontSize:8.5 },
+    alternateRowStyles: { fillColor:[244,245,246] },
+    columnStyles: { 4:{halign:"right"}, 5:{halign:"right"} },
+  });
+  let y = doc.lastAutoTable.finalY + 26;
+  if(y > 760){ doc.addPage(); y = 50; }
+  doc.setFillColor(28,31,34); doc.roundedRect(mx, y, ancho-mx*2, 34, 6, 6, "F");
+  doc.setTextColor(255,255,255); doc.setFont("helvetica","bold"); doc.setFontSize(12);
+  doc.text("TOTAL PARA SECRETARÍA DE TRÁNSITO", mx+16, y+22);
+  doc.setTextColor(255,200,46); doc.setFontSize(14);
+  doc.text(fmt(totalSecretaria), ancho-mx-16, y+22, {align:"right"});
+  doc.save(`informe_secretaria_${fmtFechaLarga(periodo.fin).replaceAll("/","-")}.pdf`);
+});
+
+document.getElementById("btn-pdf-terceros").addEventListener("click", ()=>{
+  const { periodo, salidas } = renderInformeTerceros();
+  if(!salidas.length){ toast("No hay pagos que reportar en este mes"); return; }
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({unit:"pt", format:"a4"});
+  const mx = 40, ancho = 595;
+  doc.setFillColor(28,31,34); doc.rect(0,0,ancho,66,"F");
+  doc.setFillColor(255,200,46); doc.rect(0,66,ancho,4,"F");
+  doc.setTextColor(255,255,255); doc.setFont("helvetica","bold"); doc.setFontSize(16);
+  doc.text("GÓMEZ NIETO", mx, 32);
+  doc.setFont("helvetica","normal"); doc.setFontSize(9.5); doc.setTextColor(200,203,206);
+  doc.text("Informe mensual de pago a operadores de grúa", mx, 48);
+  doc.text(`${MESES_ES[periodo.inicio.getMonth()]} ${periodo.inicio.getFullYear()}`, ancho-mx, 48, {align:"right"});
   doc.setTextColor(0,0,0);
 
   let y = 92;
   const porOperador = {};
-  salidas.forEach(v=>{
-    const opId = v.operadorId;
-    if(!porOperador[opId]) porOperador[opId] = [];
-    porOperador[opId].push(v);
-  });
+  salidas.forEach(v=>{ (porOperador[v.operadorId] = porOperador[v.operadorId] || []).push(v); });
   let totalGeneral = 0;
   Object.keys(porOperador).forEach(opId=>{
     const op = operadorDe(opId);
@@ -1958,14 +2012,12 @@ document.getElementById("btn-pdf-pago-semana").addEventListener("click", ()=>{
     doc.setFont("helvetica","bold"); doc.setFontSize(11); doc.setTextColor(20,20,20);
     doc.text(op?op.nombre:"—", mx+16, y-1);
     y += 12;
-
     let subtotal = 0;
     const filas = vehs.map(v=>{
       const c = calcularCostos(v); subtotal += c.gruaNeta;
       return [v.placa, fechaCorta(v.salidaFecha), fmt(c.valorGrua), fmt(c.gruaNeta)];
     });
     totalGeneral += subtotal;
-
     doc.autoTable({
       startY: y,
       margin: {left:mx, right:mx},
@@ -1981,14 +2033,13 @@ document.getElementById("btn-pdf-pago-semana").addEventListener("click", ()=>{
     });
     y = doc.lastAutoTable.finalY + 24;
   });
-
   if(y > 760){ doc.addPage(); y = 50; }
   doc.setFillColor(28,31,34); doc.roundedRect(mx, y, ancho-mx*2, 34, 6, 6, "F");
   doc.setTextColor(255,255,255); doc.setFont("helvetica","bold"); doc.setFontSize(12);
   doc.text("TOTAL GENERAL A PAGAR", mx+16, y+22);
   doc.setTextColor(255,200,46); doc.setFontSize(14);
   doc.text(fmt(totalGeneral), ancho-mx-16, y+22, {align:"right"});
-  doc.save(`pago_semanal_${fmtFechaLarga(periodo.fin).replaceAll("/","-")}.pdf`);
+  doc.save(`pago_operadores_${MESES_ES[periodo.inicio.getMonth()]}_${periodo.inicio.getFullYear()}.pdf`);
 });
 
 /* ---------- PAGOS Y GASTOS ---------- */
