@@ -351,6 +351,13 @@
         </div>
         <p class="subtle" style="margin:6px 0 0 0;">Algunos vehículos de la carga inicial quedaron con la fecha de hoy en vez de su fecha real de ingreso. Este botón revisa los 812 y corrige solo los que tengan la fecha equivocada, sin tocar los que ya modificaste manualmente.</p>
       </div>
+      <div class="card" style="margin-bottom:20px; border-color:var(--rojo);">
+        <div class="flex-between">
+          <h3 style="margin:0;">Eliminar vehículos duplicados (misma placa)</h3>
+          <button class="btn small" id="btn-quitar-duplicados">Buscar y eliminar duplicados</button>
+        </div>
+        <p class="subtle" style="margin:6px 0 0 0;">Por los primeros intentos de carga, algunas placas quedaron repetidas. Este botón deja solo una versión de cada placa — prioriza la que ya tenga movimientos reales (recepción en patio, salida, etc.) sobre las copias sin tocar de la importación.</p>
+      </div>
       <div class="card" style="margin-bottom:20px;">
         <h3>Importar vehículos desde Excel (carga inicial)</h3>
         <p class="subtle" style="margin-top:0;">Sube tu archivo de control actual para cargar de una vez los vehículos que ya tienes en el patio. Quedan en estado "En patio" cobrando desde su fecha real de ingreso.</p>
@@ -2197,6 +2204,51 @@ async function corregirFechasImportacion(){
 document.getElementById("btn-corregir-fechas").addEventListener("click", ()=>{
   if(!(sesion && sesion.rol==="admin")){ toast("Solo el administrador general puede hacer esto"); return; }
   corregirFechasImportacion();
+});
+
+async function eliminarVehiculosDuplicados(){
+  const btn = document.getElementById("btn-quitar-duplicados");
+  btn.disabled = true;
+  const original = btn.textContent;
+  try{
+    const porPlaca = {};
+    db.vehiculos.forEach(v=>{ (porPlaca[v.placa] = porPlaca[v.placa] || []).push(v); });
+    const grupos = Object.values(porPlaca).filter(g=>g.length>1);
+    if(!grupos.length){ toast("No se encontraron placas duplicadas."); return; }
+
+    let eliminados = 0;
+    for(const grupo of grupos){
+      // Prioridad para decidir cuál se queda:
+      // 1) el que ya tenga movimientos reales (no es una copia intacta de la importación)
+      // 2) el que tenga la fecha correcta según el Excel original
+      // 3) si sigue empatado, el primero
+      let ganador = grupo.find(v => v.patioVigilante !== "Importado desde Excel" || v.estado !== "patio");
+      if(!ganador){
+        const fechaCorrecta = MAPA_FECHAS_VERIFICADO[grupo[0].placa];
+        ganador = grupo.find(v => v.gruaFecha === fechaCorrecta) || grupo[0];
+      }
+      for(const v of grupo){
+        if(v.id === ganador.id) continue;
+        await borrarVehiculoDoc(v.id);
+        db.vehiculos = db.vehiculos.filter(x=>x.id !== v.id);
+        eliminados++;
+      }
+      btn.textContent = `Eliminando... ${eliminados}`;
+    }
+    toast(`Listo: se encontraron ${grupos.length} placa(s) duplicadas y se eliminaron ${eliminados} copia(s) de más.`);
+    renderAll();
+  }catch(e){
+    console.error(e);
+    toast("⚠ No se pudo completar: " + (e && e.message ? e.message : "error desconocido"));
+  }finally{
+    btn.disabled = false;
+    btn.textContent = original;
+  }
+}
+document.getElementById("btn-quitar-duplicados").addEventListener("click", ()=>{
+  if(!(sesion && sesion.rol==="admin")){ toast("Solo el administrador general puede hacer esto"); return; }
+  if(!confirm("¿Buscar y eliminar vehículos con placa duplicada? Esta acción no se puede deshacer.")) return;
+  eliminarVehiculosDuplicados();
 });
 
 document.getElementById("btn-reintentar-carga-inicial").addEventListener("click", ()=>{
