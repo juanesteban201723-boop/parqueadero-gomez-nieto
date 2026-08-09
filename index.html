@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Gómez Nieto · Parqueadero y Grúas</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-auth-compat.js"></script>
@@ -299,25 +300,33 @@
     </div>
 
     <div class="card" style="margin-bottom:16px;">
-      <div class="flex-between" style="margin-bottom:4px;">
-        <h3 style="margin:0;">Corte semanal</h3>
-        <div style="display:flex; gap:8px; align-items:center;">
-          <button class="btn secondary small" id="inf-semana-prev">◀ Semana anterior</button>
-          <span class="mono subtle" id="inf-semana-label" style="white-space:nowrap;"></span>
-          <button class="btn secondary small" id="inf-semana-next">Semana siguiente ▶</button>
-        </div>
+      <h3 style="margin:0 0 6px 0;">Informe 2 — Para Secretaría (semanal, se entrega los viernes)</h3>
+      <p class="subtle" style="margin-top:0;">Cada semana son 7 días dentro del mes: Semana 1 (1-7), Semana 2 (8-14), Semana 3 (15-21), Semana 4 (22 al último día). Elige año, mes y semana.</p>
+      <div class="grid grid-3" style="margin-bottom:12px;">
+        <div><label>Año</label><select id="sec-anio"></select></div>
+        <div><label>Mes</label><select id="sec-mes"></select></div>
+        <div><label>Semana</label><select id="sec-semana"></select></div>
       </div>
-      <p class="subtle" style="margin-top:0;">El corte de cada semana es de sábado a viernes, con cierre a las 5:00 p.m. del viernes. Elige la semana y descarga el informe 2.</p>
+      <div id="sec-rango" class="subtle" style="margin-bottom:14px;"></div>
+      <div class="grid grid-2" style="margin-bottom:14px;">
+        <div class="kpi a-azul"><div class="num mono" id="sec-ingresos">0</div><div class="lbl">Vehículos ingresados</div></div>
+        <div class="kpi a-verde"><div class="num mono" id="sec-salidas">0</div><div class="lbl">Vehículos con salida</div></div>
+      </div>
+      <button class="btn" id="btn-pdf-secretaria" style="width:100%;">Descargar informe de Secretaría (PDF)</button>
     </div>
 
     <div class="card">
-      <div class="flex-between" style="margin-bottom:6px;">
-        <h3 style="margin:0;">Informe 2 — Pago semanal a operadores de grúa</h3>
-        <button class="btn small" id="btn-pdf-pago-semana">Descargar (PDF)</button>
+      <h3 style="margin:0 0 6px 0;">Informe 3 — Para operadores de grúa (mensual, corte el 30 o 31)</h3>
+      <p class="subtle" style="margin-top:0;">Total de vehículos que salieron en el mes completo y el valor neto que le corresponde a cada operador según su porcentaje.</p>
+      <div class="grid grid-2" style="margin-bottom:12px;">
+        <div><label>Año</label><select id="ter-anio"></select></div>
+        <div><label>Mes</label><select id="ter-mes"></select></div>
       </div>
-      <p class="subtle" style="margin-top:0;">Calculado sobre los vehículos que <b>salieron</b> dentro de la semana seleccionada, valor neto ya con Secretaría y Pagos a terceros descontados (solo comparendo; accidente no comparte).</p>
-      <div class="divider"></div>
-      <div class="flex-between"><span style="font-weight:600;">Total neto a pagar esta semana</span><span class="op-total" id="pago-semana-total">$0</span></div>
+      <div class="grid grid-2" style="margin-bottom:14px;">
+        <div class="kpi a-naranja"><div class="num mono" id="ter-salidas">0</div><div class="lbl">Vehículos salidos en el mes</div></div>
+        <div class="kpi a-amarillo"><div class="num mono" id="ter-total">$0</div><div class="lbl">Total neto a pagar</div></div>
+      </div>
+      <button class="btn" id="btn-pdf-terceros" style="width:100%;">Descargar informe de operadores (PDF)</button>
     </div>
     </div>
   </div>
@@ -673,12 +682,14 @@ document.getElementById("login-btn-entrar").addEventListener("click", async ()=>
   }
 });
 
+let registroEnCurso = false;
 document.getElementById("btn-crear-cuenta").addEventListener("click", async ()=>{
   const nombre = document.getElementById("reg-nombre").value.trim();
   const usuario = document.getElementById("reg-usuario").value.trim();
   const password = document.getElementById("reg-password").value;
   if(!nombre || !usuario || !password){ mostrarLoginMsg("Completa todos los campos.", "var(--rojo)"); return; }
   if(password.length < 6){ mostrarLoginMsg("La contraseña debe tener al menos 6 caracteres.", "var(--rojo)"); return; }
+  registroEnCurso = true;
   try{
     const cred = await auth.createUserWithEmailAndPassword(usuarioAEmail(usuario), password);
     const uidNuevo = cred.user.uid;
@@ -689,13 +700,18 @@ document.getElementById("btn-crear-cuenta").addEventListener("click", async ()=>
     document.getElementById("reg-nombre").value=""; document.getElementById("reg-usuario").value=""; document.getElementById("reg-password").value="";
     if(esPrimero){
       toast("Cuenta creada como Administrador general (primer usuario del sistema)");
+      registroEnCurso = false;
       await sembrarCargaInicial();
+      // onAuthStateChanged se encarga de mostrar la app ahora que el perfil ya existe
+      await procesarUsuarioAutenticado(cred.user);
     } else {
+      registroEnCurso = false;
       await auth.signOut();
       irAFormularioLogin();
       mostrarLoginMsg("Cuenta creada. Espera a que el administrador la apruebe y te asigne un rol.", "var(--verde)");
     }
   }catch(e){
+    registroEnCurso = false;
     if(e.code === "auth/email-already-in-use") mostrarLoginMsg("Ese usuario ya existe, elige otro.", "var(--rojo)");
     else if(e.code === "auth/weak-password") mostrarLoginMsg("La contraseña es muy débil (mínimo 6 caracteres).", "var(--rojo)");
     else mostrarLoginMsg("No se pudo crear la cuenta. Intenta de nuevo.", "var(--rojo)");
@@ -715,22 +731,27 @@ document.getElementById("btn-cambiar-usuario").addEventListener("click", async (
   irAFormularioLogin();
 });
 
+async function procesarUsuarioAutenticado(user){
+  const perfil = await cargarPerfilUsuario(user.uid);
+  if(perfil && perfil.estado === "activo"){
+    sesion = {id:user.uid, usuario:perfil.usuario, nombre:perfil.nombre, rol:perfil.rol};
+    document.getElementById("modal-login").classList.remove("active");
+    actualizarUISesion();
+    poblarOperadores(selGOperador,true);
+    actualizarCampoOperadorGrua();
+    renderAll();
+  } else {
+    sesion = null;
+    await auth.signOut();
+    document.getElementById("modal-login").classList.add("active");
+    actualizarUISesion();
+  }
+}
+
 auth.onAuthStateChanged(async (user)=>{
+  if(registroEnCurso) return; // el flujo de registro se encarga de todo, evita interferir a mitad de camino
   if(user){
-    const perfil = await cargarPerfilUsuario(user.uid);
-    if(perfil && perfil.estado === "activo"){
-      sesion = {id:user.uid, usuario:perfil.usuario, nombre:perfil.nombre, rol:perfil.rol};
-      document.getElementById("modal-login").classList.remove("active");
-      actualizarUISesion();
-      poblarOperadores(selGOperador,true);
-      actualizarCampoOperadorGrua();
-      renderAll();
-    } else {
-      sesion = null;
-      await auth.signOut();
-      document.getElementById("modal-login").classList.add("active");
-      actualizarUISesion();
-    }
+    await procesarUsuarioAutenticado(user);
   } else {
     sesion = null;
     document.getElementById("modal-login").classList.add("active");
@@ -1790,27 +1811,67 @@ function renderInformes(){
 function pdfInventarioGeneral(){
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({unit:"pt", format:"a4"});
-  const mx = 40; let y = 50;
-  doc.setFont("helvetica","bold"); doc.setFontSize(15);
-  doc.text("PARQUEADERO Y GRÚAS GÓMEZ NIETO", mx, y); y+=16;
-  doc.setFontSize(10.5); doc.setFont("helvetica","normal");
-  doc.text("Inventario general de vehículos — Candelaria, Valle", mx, y); y+=14;
-  doc.text(`Generado: ${fechaCorta(new Date().toISOString())}`, mx, y); y+=22;
+  const mx = 40, ancho = 595;
 
-  const grupos = [["accidente","VEHÍCULOS POR ACCIDENTE"],["comparendo","VEHÍCULOS POR COMPARENDO"]];
-  grupos.forEach(([motivo,titulo])=>{
+  // Encabezado con la identidad de la app
+  doc.setFillColor(28,31,34); doc.rect(0,0,ancho,66,"F");
+  doc.setFillColor(255,200,46); doc.rect(0,66,ancho,4,"F");
+  doc.setTextColor(255,255,255); doc.setFont("helvetica","bold"); doc.setFontSize(16);
+  doc.text("GÓMEZ NIETO", mx, 32);
+  doc.setFont("helvetica","normal"); doc.setFontSize(9.5); doc.setTextColor(200,203,206);
+  doc.text("Inventario general de vehículos — Candelaria, Valle", mx, 48);
+  doc.text(`Generado: ${fechaCorta(new Date().toISOString())}`, ancho-mx, 48, {align:"right"});
+  doc.setTextColor(0,0,0);
+
+  let y = 92;
+  const columnas = ["N.°","Placa","Tipo","Marca / Color","Motivo","Estado","Ingresó","Total"];
+  const anchosCol = [30, 55, 78, 88, 65, 55, 68, 65];
+
+  const grupos = [
+    ["accidente","VEHÍCULOS POR ACCIDENTE", [255,122,26]],
+    ["comparendo","VEHÍCULOS POR COMPARENDO", [90,169,255]],
+  ];
+  grupos.forEach(([motivo,titulo,color])=>{
     const lista = db.vehiculos.filter(v=>v.motivo===motivo);
-    if(y>760){ doc.addPage(); y=50; }
-    doc.setFont("helvetica","bold"); doc.setFontSize(11.5); doc.text(`${titulo} (${lista.length})`, mx, y); y+=16;
-    doc.setFontSize(9); doc.setFont("helvetica","normal");
-    lista.forEach(v=>{
+    if(y > 740){ doc.addPage(); y = 40; }
+    doc.setFillColor(...color); doc.roundedRect(mx, y-10, 10, 10, 2, 2, "F");
+    doc.setFont("helvetica","bold"); doc.setFontSize(11); doc.setTextColor(20,20,20);
+    doc.text(`${titulo} (${lista.length})`, mx+16, y-1);
+    y += 12;
+
+    const filas = lista.map(v=>{
       const t = tarifaDe(v.tipoId); const c = calcularCostos(v);
-      if(y>780){ doc.addPage(); y=50; }
-      doc.text(`N.°${v.numeroInventario ?? "—"}  ·  ${v.placa}  ·  ${t?t.nombre:"—"} ${v.marca||""} ${v.color||""}  ·  Estado: ${estadoLabel(v.estado)}  ·  Ingresó: ${fechaCorta(v.gruaFecha)}  ·  Total: ${fmt(c.total)}`, mx, y);
-      y+=14;
+      return [
+        String(v.numeroInventario ?? "—"), v.placa, t?t.nombre:"—",
+        [v.marca,v.color].filter(Boolean).join(" / ") || "—",
+        motivoLabel(v.motivo), estadoLabel(v.estado),
+        fechaCorta(v.gruaFecha), fmt(c.total),
+      ];
     });
-    y+=14;
+
+    doc.autoTable({
+      startY: y,
+      margin: {left:mx, right:mx},
+      head: [columnas],
+      body: filas,
+      theme: "striped",
+      styles: { font:"helvetica", fontSize:7.8, cellPadding:4, textColor:[30,30,30], lineColor:[225,225,225], lineWidth:0.4 },
+      headStyles: { fillColor:[28,31,34], textColor:255, fontStyle:"bold", fontSize:8 },
+      alternateRowStyles: { fillColor:[244,245,246] },
+      columnStyles: {
+        0:{cellWidth:anchosCol[0]}, 1:{cellWidth:anchosCol[1], fontStyle:"bold"},
+        2:{cellWidth:anchosCol[2]}, 3:{cellWidth:anchosCol[3]},
+        4:{cellWidth:anchosCol[4]}, 5:{cellWidth:anchosCol[5]},
+        6:{cellWidth:anchosCol[6]}, 7:{cellWidth:anchosCol[7], halign:"right", fontStyle:"bold"},
+      },
+      didDrawPage: (data) => {
+        doc.setFontSize(8); doc.setTextColor(150,150,150);
+        doc.text(`Página ${doc.internal.getNumberOfPages()}`, ancho-mx, 820, {align:"right"});
+      },
+    });
+    y = doc.lastAutoTable.finalY + 26;
   });
+
   doc.save("inventario_general.pdf");
 }
 document.getElementById("btn-pdf-inventario-general").addEventListener("click", pdfInventarioGeneral);
@@ -1870,14 +1931,18 @@ document.getElementById("btn-pdf-pago-semana").addEventListener("click", ()=>{
   if(!salidas.length){ toast("No hay pagos que reportar en esta semana"); return; }
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({unit:"pt", format:"a4"});
-  const mx = 40; let y = 50;
-  doc.setFont("helvetica","bold"); doc.setFontSize(15);
-  doc.text("PARQUEADERO Y GRÚAS GÓMEZ NIETO", mx, y); y+=16;
-  doc.setFontSize(10.5); doc.setFont("helvetica","normal");
-  doc.text("Reporte de pago semanal a operadores de grúa", mx, y); y+=14;
-  doc.text(`Semana: ${fmtFechaLarga(periodo.inicio)} — ${fmtFechaLarga(periodo.fin)} (corte 5:00 p.m. viernes)`, mx, y); y+=22;
-  doc.setDrawColor(200); doc.line(mx,y,555,y); y+=20;
+  const mx = 40, ancho = 595;
 
+  doc.setFillColor(28,31,34); doc.rect(0,0,ancho,66,"F");
+  doc.setFillColor(255,200,46); doc.rect(0,66,ancho,4,"F");
+  doc.setTextColor(255,255,255); doc.setFont("helvetica","bold"); doc.setFontSize(16);
+  doc.text("GÓMEZ NIETO", mx, 32);
+  doc.setFont("helvetica","normal"); doc.setFontSize(9.5); doc.setTextColor(200,203,206);
+  doc.text("Reporte de pago semanal a operadores de grúa", mx, 48);
+  doc.text(`${fmtFechaLarga(periodo.inicio)} — ${fmtFechaLarga(periodo.fin)} (corte 5:00 p.m. viernes)`, ancho-mx, 48, {align:"right"});
+  doc.setTextColor(0,0,0);
+
+  let y = 92;
   const porOperador = {};
   salidas.forEach(v=>{
     const opId = v.operadorId;
@@ -1888,24 +1953,41 @@ document.getElementById("btn-pdf-pago-semana").addEventListener("click", ()=>{
   Object.keys(porOperador).forEach(opId=>{
     const op = operadorDe(opId);
     const vehs = porOperador[opId];
-    if(y>750){ doc.addPage(); y=50; }
-    doc.setFont("helvetica","bold"); doc.setFontSize(11.5); doc.text(op?op.nombre:"—", mx, y); y+=16;
-    doc.setFontSize(9); doc.setFont("helvetica","normal");
+    if(y > 740){ doc.addPage(); y = 40; }
+    doc.setFillColor(255,200,46); doc.roundedRect(mx, y-10, 10, 10, 2, 2, "F");
+    doc.setFont("helvetica","bold"); doc.setFontSize(11); doc.setTextColor(20,20,20);
+    doc.text(op?op.nombre:"—", mx+16, y-1);
+    y += 12;
+
     let subtotal = 0;
-    vehs.forEach(v=>{
+    const filas = vehs.map(v=>{
       const c = calcularCostos(v); subtotal += c.gruaNeta;
-      if(y>780){ doc.addPage(); y=50; }
-      doc.text(`${v.placa}  ·  Salió: ${fechaCorta(v.salidaFecha)}  ·  Grúa: ${fmt(c.valorGrua)}  ·  Neto: ${fmt(c.gruaNeta)}`, mx, y); y+=14;
+      return [v.placa, fechaCorta(v.salidaFecha), fmt(c.valorGrua), fmt(c.gruaNeta)];
     });
-    doc.setFont("helvetica","bold");
-    doc.text(`Subtotal ${op?op.nombre:"—"}: ${fmt(subtotal)}`, mx, y); y+=22;
-    doc.setFont("helvetica","normal");
     totalGeneral += subtotal;
+
+    doc.autoTable({
+      startY: y,
+      margin: {left:mx, right:mx},
+      head: [["Placa","Salió","Valor grúa","Neto a pagar"]],
+      body: filas,
+      foot: [[{content:`Subtotal ${op?op.nombre:"—"}`, colSpan:3, styles:{halign:"right", fontStyle:"bold"}}, {content:fmt(subtotal), styles:{halign:"right", fontStyle:"bold"}}]],
+      theme: "striped",
+      styles: { font:"helvetica", fontSize:8.5, cellPadding:5, textColor:[30,30,30], lineColor:[225,225,225], lineWidth:0.4 },
+      headStyles: { fillColor:[28,31,34], textColor:255, fontStyle:"bold", fontSize:8.5 },
+      footStyles: { fillColor:[255,247,220], textColor:[20,20,20] },
+      alternateRowStyles: { fillColor:[244,245,246] },
+      columnStyles: { 2:{halign:"right"}, 3:{halign:"right"} },
+    });
+    y = doc.lastAutoTable.finalY + 24;
   });
-  if(y>750){ doc.addPage(); y=50; }
-  doc.setDrawColor(200); doc.line(mx,y,555,y); y+=20;
-  doc.setFont("helvetica","bold"); doc.setFontSize(12);
-  doc.text(`TOTAL GENERAL A PAGAR: ${fmt(totalGeneral)}`, mx, y);
+
+  if(y > 760){ doc.addPage(); y = 50; }
+  doc.setFillColor(28,31,34); doc.roundedRect(mx, y, ancho-mx*2, 34, 6, 6, "F");
+  doc.setTextColor(255,255,255); doc.setFont("helvetica","bold"); doc.setFontSize(12);
+  doc.text("TOTAL GENERAL A PAGAR", mx+16, y+22);
+  doc.setTextColor(255,200,46); doc.setFontSize(14);
+  doc.text(fmt(totalGeneral), ancho-mx-16, y+22, {align:"right"});
   doc.save(`pago_semanal_${fmtFechaLarga(periodo.fin).replaceAll("/","-")}.pdf`);
 });
 
