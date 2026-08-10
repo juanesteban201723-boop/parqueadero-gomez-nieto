@@ -524,6 +524,10 @@
       <input type="text" id="reg-usuario" placeholder="Elige un usuario" autocomplete="username">
       <label>Contraseña</label>
       <input type="password" id="reg-password" placeholder="Elige una contraseña" autocomplete="new-password">
+      <label>Cédula (solo si vas a ser operador de grúa)</label>
+      <input type="text" id="reg-cedula" placeholder="N.° de cédula" inputmode="numeric">
+      <label>Placa de tu grúa (solo si vas a ser operador de grúa)</label>
+      <input type="text" id="reg-placa-grua" placeholder="Ej: WXY-01">
       <button class="btn" id="btn-crear-cuenta" style="width:100%;">Crear cuenta</button>
       <p class="subtle" style="text-align:center; margin-top:14px;">Tu cuenta quedará <b>pendiente</b> hasta que el administrador la apruebe y te asigne un rol. <a href="#" id="link-ir-login" style="color:var(--amarillo);">Volver a iniciar sesión</a></p>
     </div>
@@ -710,6 +714,8 @@ document.getElementById("btn-crear-cuenta").addEventListener("click", async ()=>
   const nombre = document.getElementById("reg-nombre").value.trim();
   const usuario = document.getElementById("reg-usuario").value.trim();
   const password = document.getElementById("reg-password").value;
+  const cedula = document.getElementById("reg-cedula").value.trim();
+  const placaGrua = document.getElementById("reg-placa-grua").value.trim().toUpperCase();
   if(!nombre || !usuario || !password){ mostrarLoginMsg("Completa todos los campos.", "var(--rojo)"); return; }
   if(password.length < 6){ mostrarLoginMsg("La contraseña debe tener al menos 6 caracteres.", "var(--rojo)"); return; }
   registroEnCurso = true;
@@ -718,9 +724,9 @@ document.getElementById("btn-crear-cuenta").addEventListener("click", async ()=>
     const uidNuevo = cred.user.uid;
     const existentes = await usuariosCol.limit(1).get();
     const esPrimero = existentes.empty;
-    const perfil = { id: uidNuevo, usuario, nombre, rol: esPrimero ? "admin" : null, estado: esPrimero ? "activo" : "pendiente" };
+    const perfil = { id: uidNuevo, usuario, nombre, cedula: cedula||null, placaGrua: placaGrua||null, empresaId: null, rol: esPrimero ? "admin" : null, estado: esPrimero ? "activo" : "pendiente" };
     await usuariosCol.doc(uidNuevo).set(perfil);
-    document.getElementById("reg-nombre").value=""; document.getElementById("reg-usuario").value=""; document.getElementById("reg-password").value="";
+    document.getElementById("reg-nombre").value=""; document.getElementById("reg-usuario").value=""; document.getElementById("reg-password").value=""; document.getElementById("reg-cedula").value=""; document.getElementById("reg-placa-grua").value="";
     if(esPrimero){
       toast("Cuenta creada como Administrador general (primer usuario del sistema)");
       registroEnCurso = false;
@@ -757,7 +763,7 @@ document.getElementById("btn-cambiar-usuario").addEventListener("click", async (
 async function procesarUsuarioAutenticado(user){
   const perfil = await cargarPerfilUsuario(user.uid);
   if(perfil && perfil.estado === "activo"){
-    sesion = {id:user.uid, usuario:perfil.usuario, nombre:perfil.nombre, rol:perfil.rol};
+    sesion = {id:user.uid, usuario:perfil.usuario, nombre:perfil.nombre, rol:perfil.rol, empresaId:perfil.empresaId||null};
     document.getElementById("modal-login").classList.remove("active");
     actualizarUISesion();
     poblarOperadores(selGOperador,true);
@@ -788,7 +794,17 @@ function uid(){ return Date.now().toString(36) + Math.random().toString(36).slic
 const fmt = n => "$" + Math.round(n).toLocaleString("es-CO");
 function toast(msg){ const t=document.getElementById("toast"); t.textContent=msg; t.classList.add("show"); setTimeout(()=>t.classList.remove("show"),2600); }
 function tarifaDe(id){ return db.tarifas.find(t=>t.id===id); }
-function operadorDe(id){ return db.usuarios.find(u=>u.id===id); }
+const EMPRESAS_OPERADORAS = [
+  {id:"gomeznieto1", nombre:"Gómez Nieto"},
+  {id:"operadorgrua1", nombre:"Operador Grúa"},
+];
+function empresaDe(id){ return EMPRESAS_OPERADORAS.find(e=>e.id===id); }
+function operadorDe(id){ return empresaDe(id) || db.usuarios.find(u=>u.id===id); }
+function nombreConductor(v){
+  const empresa = operadorDe(v.operadorId);
+  if(v.conductorNombre) return `${v.conductorNombre}${empresa ? " ("+empresa.nombre+")" : ""}`;
+  return empresa ? empresa.nombre : "—";
+}
 function gruaUnidadDe(id){ return db.gruas.find(g=>g.id===id); }
 function hoyStr(){ return new Date().toDateString(); }
 function fechaCorta(iso){ if(!iso) return "—"; const d=new Date(iso); return d.toLocaleDateString("es-CO",{day:"2-digit",month:"2-digit"})+" "+d.toLocaleTimeString("es-CO",{hour:"2-digit",minute:"2-digit"}); }
@@ -876,9 +892,7 @@ document.querySelectorAll(".tab-btn").forEach(btn=>{
 function poblarTipos(sel){ sel.innerHTML = db.tarifas.map(t=>`<option value="${t.id}">${t.nombre}</option>`).join(""); }
 function poblarOperadores(sel, opcional){
   const base = opcional ? `<option value="">— Ninguno / vehículo de terceros desconocidos —</option>` : "";
-  const gruas = db.usuarios.filter(u=>u.rol==="grua" && u.estado==="activo");
-  if(!gruas.length){ sel.innerHTML = base || `<option value="">— No hay operadores de grúa activos, pídele al administrador que apruebe una cuenta —</option>`; return; }
-  sel.innerHTML = base + gruas.map(o=>`<option value="${o.id}">${o.nombre}</option>`).join("");
+  sel.innerHTML = base + EMPRESAS_OPERADORAS.map(e=>`<option value="${e.id}">${e.nombre}</option>`).join("");
 }
 const selGTipo = document.getElementById("g-tipo");
 const selGOperador = document.getElementById("g-operador");
@@ -888,7 +902,10 @@ function actualizarCampoOperadorGrua(){
   const esGrua = sesion && sesion.rol === "grua";
   document.getElementById("g-operador-select-wrap").style.display = esGrua ? "none" : "block";
   document.getElementById("g-operador-display").style.display = esGrua ? "flex" : "none";
-  if(esGrua) document.getElementById("g-operador-display-nombre").textContent = sesion.nombre;
+  if(esGrua){
+    const empresa = empresaDe(sesion.empresaId);
+    document.getElementById("g-operador-display-nombre").textContent = `${sesion.nombre}${empresa ? " ("+empresa.nombre+")" : " (sin empresa asignada — pide al administrador que te la asigne)"}`;
+  }
 
   const wrapUnidad = document.getElementById("g-unidad-wrap");
   const selUnidad = document.getElementById("g-unidad");
@@ -942,8 +959,9 @@ document.getElementById("form-grua").addEventListener("submit", e=>{
   const placa = document.getElementById("g-placa").value.trim().toUpperCase();
   if(!placa){ toast("Ingresa la placa"); return; }
   if(db.vehiculos.some(v=>v.placa===placa && v.estado!=="salido")){ toast("Ya existe un vehículo activo con esa placa"); return; }
-  if(!db.usuarios.some(u=>u.rol==="grua"&&u.estado==="activo") && !(sesion && sesion.rol==="grua")){ toast("No hay operadores de grúa activos, pídele al administrador que apruebe una cuenta"); return; }
-  const operadorIdFinal = (sesion && sesion.rol==="grua") ? sesion.id : selGOperador.value;
+  if(sesion && sesion.rol==="grua" && !sesion.empresaId){ toast("Tu cuenta todavía no tiene una empresa asignada — pídele al administrador que te la asigne en Usuarios"); return; }
+  const operadorIdFinal = (sesion && sesion.rol==="grua") ? sesion.empresaId : selGOperador.value;
+  const conductorNombreFinal = (sesion && sesion.rol==="grua") ? sesion.nombre : null;
   const gruaUnidadIdFinal = (document.getElementById("g-unidad-wrap").style.display !== "none") ? document.getElementById("g-unidad").value : null;
   const numeroInventario = db.consecutivoInventario;
   const veh = {
@@ -954,6 +972,7 @@ document.getElementById("form-grua").addEventListener("submit", e=>{
     color: document.getElementById("g-color").value.trim(),
     motivo: document.getElementById("g-motivo").value,
     operadorId: operadorIdFinal,
+    conductorNombre: conductorNombreFinal,
     gruaUnidadId: gruaUnidadIdFinal,
     gruaDanos: document.getElementById("g-danos").value.trim(),
     gruaFotos: fotosGruaTemp.slice(),
@@ -998,7 +1017,7 @@ function mostrarFormularioPatio(v){
       <div class="ticket-plate">${v.placa}</div>
       <div class="ticket-info">
         <div class="t1">${t?t.nombre:"—"} <span class="badge ${v.motivo}">${motivoLabel(v.motivo)}</span></div>
-        <div class="t2">Recibido en grúa por ${op?op.nombre:"—"} · ${fechaCorta(v.gruaFecha)}</div>
+        <div class="t2">Recibido en grúa por ${nombreConductor(v)} · ${fechaCorta(v.gruaFecha)}</div>
         ${v.gruaDanos ? `<div class="t2">Daños reportados: ${v.gruaDanos}</div>` : ""}
         ${v.gruaFotos.length ? `<div class="fotos-preview" style="margin-top:6px;">${v.gruaFotos.map(f=>`<img src="${f}" class="foto-thumb" onclick="verFoto('${f}')">`).join("")}</div>` : ""}
       </div>
@@ -1129,7 +1148,7 @@ async function generarInventarioPDF(vehId){
   }
 
   const lineasGrua = [
-    `Recibido por: ${op?op.nombre:"—"}${v.gruaUnidadId ? "  ·  Unidad: "+(gruaUnidadDe(v.gruaUnidadId)?.identificador||"—") : ""}`,
+    `Recibido por: ${nombreConductor(v)}${v.gruaUnidadId ? "  ·  Unidad: "+(gruaUnidadDe(v.gruaUnidadId)?.identificador||"—") : ""}`,
     `Fecha y hora: ${fechaCorta(v.gruaFecha)}`,
   ];
   const danosLines = doc.splitTextToSize(`Daños reportados: ${v.gruaDanos || "Ninguno"}`, CW-32);
@@ -1194,7 +1213,7 @@ async function generarInventarioPDF(vehId){
   y += 16;
   doc.setFont("helvetica","italic"); doc.setFontSize(8.8); doc.setTextColor(50,54,58);
   const notaFirma = doc.splitTextToSize(
-    `Este documento no requiere firma manuscrita. El ingreso con usuario y contraseña personal e intransferible dentro del sistema constituye la firma electrónica de conformidad de cada persona: ${op?op.nombre:"—"} (operador de grúa, usuario: ${op?op.usuario:"—"}) y ${v.patioVigilante || "—"} (vigilante de parqueadero), en las fechas y horas ya registradas en este inventario.`,
+    `Este documento no requiere firma manuscrita. El ingreso con usuario y contraseña personal e intransferible dentro del sistema constituye la firma electrónica de conformidad de cada persona: ${nombreConductor(v)} (operador de grúa) y ${v.patioVigilante || "—"} (vigilante de parqueadero), en las fechas y horas ya registradas en este inventario.`,
     CW
   );
   doc.text(notaFirma, MX, y);
@@ -1226,7 +1245,7 @@ function buscarInventarioPuntual(){
       <div class="ticket-plate">${v.placa}</div>
       <div class="ticket-info">
         <div class="t1">N.°${v.numeroInventario ?? "—"} · ${t?t.nombre:"—"} ${v.marca||""} ${v.color||""} <span class="badge ${v.motivo}">${motivoLabel(v.motivo)}</span> <span class="badge estado-${v.estado}">${estadoLabel(v.estado)}</span></div>
-        <div class="t2">Recibió en grúa: ${op?op.nombre:"—"}${v.gruaUnidadId ? " · unidad "+(gruaUnidadDe(v.gruaUnidadId)?.identificador||"—") : ""} · ${fechaCorta(v.gruaFecha)}</div>
+        <div class="t2">Recibió en grúa: ${nombreConductor(v)}${v.gruaUnidadId ? " · unidad "+(gruaUnidadDe(v.gruaUnidadId)?.identificador||"—") : ""} · ${fechaCorta(v.gruaFecha)}</div>
         <div class="t2">Recibió en patio: ${v.patioVigilante || "—"}${v.patioFecha ? " · "+fechaCorta(v.patioFecha) : ""}</div>
         ${v.gruaDanos ? `<div class="t2">Daños reportados: ${v.gruaDanos}</div>` : ""}
         ${v.patioObs ? `<div class="t2">Observaciones patio: ${v.patioObs}</div>` : ""}
@@ -1265,7 +1284,7 @@ function renderInventario(){
       <td>${[v.marca,v.color].filter(Boolean).join(" · ") || "—"}</td>
       <td><span class="badge ${v.motivo}">${motivoLabel(v.motivo)}</span></td>
       <td><span class="badge estado-${v.estado}">${estadoLabel(v.estado)}</span></td>
-      <td>${opG?opG.nombre:"—"}</td>
+      <td>${nombreConductor(v)}</td>
       <td>${v.patioVigilante || "—"}</td>
       <td>${c.dias||"—"}</td>
       <td>${fmt(c.valorParqueo)}</td>
@@ -1288,7 +1307,7 @@ function renderListaTransito(){
       <div class="ticket-plate">${v.placa}</div>
       <div class="ticket-info">
         <div class="t1">N.°${v.numeroInventario ?? "—"} · ${t?t.nombre:"—"} ${v.marca||""} <span class="badge ${v.motivo}">${motivoLabel(v.motivo)}</span></div>
-        <div class="t2">Grúa: ${op?op.nombre:"—"} · ${fechaCorta(v.gruaFecha)}</div>
+        <div class="t2">Grúa: ${nombreConductor(v)} · ${fechaCorta(v.gruaFecha)}</div>
       </div>
       <button class="btn small" onclick="document.getElementById('p-buscar-placa').value='${v.placa}'; buscarParaPatio(); window.scrollTo(0,0);">Recibir en patio</button>
     </div>`;
@@ -1319,7 +1338,7 @@ function buscarParaSalida(){
       <div class="ticket-plate">${v.placa}</div>
       <div class="ticket-info">
         <div class="t1">N.°${v.numeroInventario ?? "—"} · ${t.nombre} <span class="badge ${v.motivo}">${motivoLabel(v.motivo)}</span></div>
-        <div class="t2">Ingresó al patio: ${fechaCorta(v.patioFecha)} · ${c.dias} día(s) cobrados · Grúa: ${op?op.nombre:"—"}</div>
+        <div class="t2">Ingresó al patio: ${fechaCorta(v.patioFecha)} · ${c.dias} día(s) cobrados · Grúa: ${nombreConductor(v)}</div>
       </div>
     </div>
     <div class="split-box"><div class="flex-between"><span class="lbl">Parqueadero (${fmt(t.parqueo)} × ${c.dias})</span><span class="val mono">${fmt(c.valorParqueo)}</span></div></div>
@@ -1454,13 +1473,16 @@ function renderOperadoresTab(){
   const pendientes = db.usuarios.filter(u=>u.estado==="pendiente");
   document.getElementById("lista-pendientes").innerHTML = (pendientes.length ? pendientes.map(u=>`
     <div class="ticket-row" style="border-left-color:var(--amarillo); flex-wrap:wrap;">
-      <div class="ticket-info"><div class="t1">${u.nombre}</div><div class="t2">usuario: ${u.usuario}</div></div>
+      <div class="ticket-info"><div class="t1">${u.nombre}</div><div class="t2">usuario: ${u.usuario}${u.cedula?" · C.C. "+u.cedula:""}${u.placaGrua?" · Grúa: "+u.placaGrua:""}</div></div>
       <select id="rol-pend-${u.id}" style="width:auto; margin:0;" ${dis}>
         <option value="grua">Operador de grúa</option>
         <option value="vigilante">Vigilante de parqueadero (patio)</option>
         <option value="secretaria">Secretaría (salidas)</option>
         <option value="administrador">Administrador</option>
         <option value="admin">Administrador general</option>
+      </select>
+      <select id="empresa-pend-${u.id}" style="width:auto; margin:0;" ${dis}>
+        ${EMPRESAS_OPERADORAS.map(e=>`<option value="${e.id}">${e.nombre}</option>`).join("")}
       </select>
       <button class="btn small" onclick="aprobarUsuario('${u.id}')" ${dis}>Aceptar</button>
       <button class="btn secondary small" onclick="eliminarUsuario('${u.id}')" ${dis}>Rechazar</button>
@@ -1519,8 +1541,12 @@ function aprobarUsuario(id){
   const u = db.usuarios.find(x=>x.id===id); if(!u) return;
   const rol = document.getElementById("rol-pend-"+id).value;
   u.rol = rol; u.estado = "activo";
+  if(rol === "grua"){
+    u.empresaId = document.getElementById("empresa-pend-"+id).value;
+  }
   guardarUsuario(u);
-  toast(`Cuenta de ${u.nombre} aprobada como ${rolLabel(rol)}`);
+  const empresaTxt = (rol==="grua" && empresaDe(u.empresaId)) ? ` — Empresa: ${empresaDe(u.empresaId).nombre}` : "";
+  toast(`Cuenta de ${u.nombre} aprobada como ${rolLabel(rol)}${empresaTxt}`);
   poblarOperadores(selGOperador,true);
   renderAll();
 }
@@ -1750,7 +1776,7 @@ function renderDashboard(){
   document.getElementById("pendiente-patio").innerHTML = transito.length ? transito.map(v=>{
     const op = operadorDe(v.operadorId);
     return `<div class="flex-between" style="padding:8px 0; border-bottom:1px solid var(--linea);">
-      <span class="mono">${v.placa} <span class="subtle">(grúa: ${op?op.nombre:"—"})</span></span>
+      <span class="mono">${v.placa} <span class="subtle">(grúa: ${nombreConductor(v)})</span></span>
       <span class="subtle mono">${fechaCorta(v.gruaFecha)}</span>
     </div>`;
   }).join("") : `<div class="empty subtle">Nada pendiente</div>`;
@@ -1928,7 +1954,7 @@ function excelInventarioGeneral(){
       "Color": v.color || "",
       "Motivo": motivoLabel(v.motivo),
       "Estado": estadoLabel(v.estado),
-      "Recibió en grúa": op ? op.nombre : "",
+      "Recibió en grúa": nombreConductor(v),
       "Fecha ingreso": fechaCorta(v.gruaFecha),
       "Recibió en patio": v.patioVigilante || "",
       "Días cobrados": c.dias || 0,
