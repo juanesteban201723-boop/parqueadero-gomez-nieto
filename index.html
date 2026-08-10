@@ -312,6 +312,8 @@
         <div class="kpi a-azul"><div class="num mono" id="sec-ingresos">0</div><div class="lbl">Vehículos ingresados</div></div>
         <div class="kpi a-verde"><div class="num mono" id="sec-salidas">0</div><div class="lbl">Vehículos con salida</div></div>
       </div>
+      <button class="btn secondary small" id="btn-ver-detalle-sec" style="margin-bottom:10px;">Ver detalle (diagnóstico)</button>
+      <div id="sec-detalle-lista" style="display:none; max-height:320px; overflow-y:auto; background:var(--asfalto); border:1px solid var(--linea); border-radius:8px; padding:10px; margin-bottom:14px; font-family:'JetBrains Mono',monospace; font-size:12px;"></div>
       <button class="btn" id="btn-pdf-secretaria" style="width:100%;">Descargar informe de Secretaría (PDF)</button>
     </div>
 
@@ -357,6 +359,13 @@
           <button class="btn small" id="btn-quitar-duplicados">Buscar y eliminar duplicados</button>
         </div>
         <p class="subtle" style="margin:6px 0 0 0;">Por los primeros intentos de carga, algunas placas quedaron repetidas. Este botón deja solo una versión de cada placa — prioriza la que ya tenga movimientos reales (recepción en patio, salida, etc.) sobre las copias sin tocar de la importación.</p>
+      </div>
+      <div class="card" style="margin-bottom:20px; border-color:var(--rojo);">
+        <div class="flex-between">
+          <h3 style="margin:0;">Eliminar registros dañados (importación con columnas mal ubicadas)</h3>
+          <button class="btn small" id="btn-limpiar-basura">Buscar y eliminar</button>
+        </div>
+        <p class="subtle" style="margin:6px 0 0 0;">Si en algún momento se importó una hoja de Excel con otro orden de columnas, quedaron registros con datos revueltos (fechas en el campo de placa, montos absurdos, etc.). Este botón identifica y elimina SOLO esos registros dañados — nunca toca los 812 vehículos reales de la carga inicial ni nada que hayas modificado tú.</p>
       </div>
       <div class="card" style="margin-bottom:20px;">
         <h3>Importar vehículos desde Excel (carga inicial)</h3>
@@ -1160,18 +1169,11 @@ async function generarInventarioPDF(vehId){
   // ===== AUTORIZACIÓN DE ENTREGA (solo accidente ya entregado) =====
   if(v.motivo === "accidente" && v.estado === "salido" && v.autorizaEntrega){
     y = nuevaPaginaSiNecesita(150, y);
-    const lineasAutoriza = [
-      `Rol: ${AUTORIZA_LABELS[v.autorizaEntrega.tipo] || v.autorizaEntrega.tipo}`,
-      `Autoriza: ${v.autorizaEntrega.nombre || "—"}`,
-    ];
-    const alto = 26 + lineasAutoriza.length*14;
+    const alto = 26;
     doc.setFillColor(...VERDE); doc.rect(MX, y, 4, alto, "F");
     doc.setFillColor(...GRISCLARO); doc.rect(MX+4, y, CW-4, alto, "F");
     doc.setFont("helvetica","bold"); doc.setFontSize(10.5); doc.setTextColor(...NEGRO);
     doc.text("AUTORIZACIÓN DE ENTREGA", MX+16, y+18);
-    doc.setFont("helvetica","normal"); doc.setFontSize(9.5); doc.setTextColor(60,64,68);
-    let ly = y+18+16;
-    lineasAutoriza.forEach(l=>{ doc.text(l, MX+16, ly); ly += 14; });
     doc.setTextColor(0,0,0);
     y += alto + 14;
     if(v.autorizaEntrega.foto){
@@ -1229,7 +1231,7 @@ function buscarInventarioPuntual(){
         ${v.gruaDanos ? `<div class="t2">Daños reportados: ${v.gruaDanos}</div>` : ""}
         ${v.patioObs ? `<div class="t2">Observaciones patio: ${v.patioObs}</div>` : ""}
         ${v.ordenSalida ? `<div class="t2">Orden de salida N.° ${v.ordenSalida} · ${fechaCorta(v.salidaFecha)}</div>` : ""}
-        ${v.autorizaEntrega ? `<div class="t2">Autoriza entrega: ${AUTORIZA_LABELS[v.autorizaEntrega.tipo]||v.autorizaEntrega.tipo} — ${v.autorizaEntrega.nombre||"—"}</div>` : ""}
+        ${v.autorizaEntrega ? `<div class="t2">Autorización de entrega: ✅ adjunta</div>` : ""}
       </div>
     </div>
     ${(v.gruaFotos&&v.gruaFotos.length)||(v.patioFotos&&v.patioFotos.length)||(v.autorizaEntrega&&v.autorizaEntrega.foto) ? `
@@ -1335,15 +1337,6 @@ function buscarParaSalida(){
     <div class="divider"></div>
     <div class="card" style="border-color:var(--naranja); padding:16px;">
       <h3 style="margin:0 0 10px 0;">Autorización de entrega (obligatorio en accidente)</h3>
-      <label>Rol de quien autoriza</label>
-      <select id="s-autoriza-tipo">
-        <option value="juzgado">Juzgado</option>
-        <option value="fiscalia">Fiscalía</option>
-        <option value="inspector">Inspector de Tránsito</option>
-        <option value="desistimiento">Desistimiento del propietario</option>
-      </select>
-      <label>Nombre y cargo de quien autoriza</label>
-      <input type="text" id="s-autoriza-nombre" placeholder="Ej: Dra. María López, Fiscal 12 Seccional">
       <label>Foto del oficio que autoriza la entrega</label>
       <input type="file" id="s-autoriza-foto" accept="image/*">
       <div class="fotos-preview" id="s-autoriza-foto-preview"></div>
@@ -1365,10 +1358,8 @@ function buscarParaSalida(){
 function confirmarSalida(vehId){
   const v = db.vehiculos.find(x=>x.id===vehId); if(!v) return;
   if(v.motivo === "accidente"){
-    const nombreAutoriza = document.getElementById("s-autoriza-nombre").value.trim();
-    if(!nombreAutoriza){ toast("Escribe el nombre y cargo de quien autoriza la entrega"); return; }
     if(!fotoAutorizaTemp){ toast("Adjunta la foto del oficio que autoriza la entrega"); return; }
-    v.autorizaEntrega = { tipo: document.getElementById("s-autoriza-tipo").value, nombre: nombreAutoriza, foto: fotoAutorizaTemp };
+    v.autorizaEntrega = { foto: fotoAutorizaTemp };
   }
   v.salidaFecha = new Date().toISOString();
   v.estado = "salido";
@@ -1806,8 +1797,25 @@ function renderInformeSecretaria(){
   const salidas = db.vehiculos.filter(v=>dentroDe(v.salidaFecha, periodo.inicio, periodo.fin));
   document.getElementById("sec-ingresos").textContent = ingresos.length;
   document.getElementById("sec-salidas").textContent = salidas.length;
+  window.__ultimoDetalleSec = ingresos;
+  if(document.getElementById("sec-detalle-lista").style.display !== "none"){
+    mostrarDetalleSec();
+  }
   return { periodo, ingresos, salidas };
 }
+function mostrarDetalleSec(){
+  const cont = document.getElementById("sec-detalle-lista");
+  const lista = window.__ultimoDetalleSec || [];
+  cont.innerHTML = lista.length
+    ? lista.map(v=>`${v.numeroInventario??"—"} · ${v.placa} · ${v.motivo} · ${fechaCorta(v.gruaFecha)}`).join("<br>")
+    : "Sin vehículos en este rango.";
+}
+document.getElementById("btn-ver-detalle-sec").addEventListener("click", ()=>{
+  const cont = document.getElementById("sec-detalle-lista");
+  const visible = cont.style.display !== "none";
+  cont.style.display = visible ? "none" : "block";
+  if(!visible) mostrarDetalleSec();
+});
 ["sec-anio","sec-mes","sec-semana"].forEach(id=>document.getElementById(id).addEventListener("change", renderInformeSecretaria));
 
 function renderInformeTerceros(){
@@ -2211,10 +2219,14 @@ async function eliminarVehiculosDuplicados(){
   btn.disabled = true;
   const original = btn.textContent;
   try{
+    const normalizarPlaca = (p) => (p||"").toString().trim().toUpperCase().replace(/[\s.\-]+/g,"");
     const porPlaca = {};
-    db.vehiculos.forEach(v=>{ (porPlaca[v.placa] = porPlaca[v.placa] || []).push(v); });
+    db.vehiculos.forEach(v=>{ const clave = normalizarPlaca(v.placa); (porPlaca[clave] = porPlaca[clave] || []).push(v); });
     const grupos = Object.values(porPlaca).filter(g=>g.length>1);
-    if(!grupos.length){ toast("No se encontraron placas duplicadas."); return; }
+    if(!grupos.length){
+      toast(`No se encontraron placas duplicadas (ni siquiera con espacios/mayúsculas distintas). Total de vehículos ahora mismo: ${db.vehiculos.length}.`);
+      return;
+    }
 
     let eliminados = 0;
     for(const grupo of grupos){
@@ -2224,7 +2236,7 @@ async function eliminarVehiculosDuplicados(){
       // 3) si sigue empatado, el primero
       let ganador = grupo.find(v => v.patioVigilante !== "Importado desde Excel" || v.estado !== "patio");
       if(!ganador){
-        const fechaCorrecta = MAPA_FECHAS_VERIFICADO[grupo[0].placa];
+        const fechaCorrecta = MAPA_FECHAS_VERIFICADO[normalizarPlaca(grupo[0].placa)];
         ganador = grupo.find(v => v.gruaFecha === fechaCorrecta) || grupo[0];
       }
       for(const v of grupo){
@@ -2245,6 +2257,45 @@ async function eliminarVehiculosDuplicados(){
     btn.textContent = original;
   }
 }
+async function limpiarRegistrosDanados(){
+  const btn = document.getElementById("btn-limpiar-basura");
+  btn.disabled = true;
+  const original = btn.textContent;
+  try{
+    const normalizarPlaca = (p) => (p||"").toString().trim().toUpperCase().replace(/[\s.\-]+/g,"");
+    const placasValidas = new Set(Object.keys(MAPA_FECHAS_VERIFICADO));
+    // Solo se considera "dañado" un vehículo que: viene de una importación (nunca se tocó a mano)
+    // y su placa NO está entre las 812 placas reales verificadas del Excel.
+    const danados = db.vehiculos.filter(v =>
+      v.patioVigilante === "Importado desde Excel" &&
+      v.estado === "patio" &&
+      !placasValidas.has(normalizarPlaca(v.placa))
+    );
+    if(!danados.length){ toast("No se encontraron registros dañados."); return; }
+    if(!confirm(`Se encontraron ${danados.length} registro(s) dañado(s) (no son parte de los 812 vehículos reales). ¿Eliminarlos?`)){ return; }
+
+    let eliminados = 0;
+    for(const v of danados){
+      await borrarVehiculoDoc(v.id);
+      db.vehiculos = db.vehiculos.filter(x=>x.id !== v.id);
+      eliminados++;
+      btn.textContent = `Eliminando... ${eliminados}/${danados.length}`;
+    }
+    toast(`Listo: se eliminaron ${eliminados} registro(s) dañado(s). Total de vehículos ahora: ${db.vehiculos.length}.`);
+    renderAll();
+  }catch(e){
+    console.error(e);
+    toast("⚠ No se pudo completar: " + (e && e.message ? e.message : "error desconocido"));
+  }finally{
+    btn.disabled = false;
+    btn.textContent = original;
+  }
+}
+document.getElementById("btn-limpiar-basura").addEventListener("click", ()=>{
+  if(!(sesion && sesion.rol==="admin")){ toast("Solo el administrador general puede hacer esto"); return; }
+  limpiarRegistrosDanados();
+});
+
 document.getElementById("btn-quitar-duplicados").addEventListener("click", ()=>{
   if(!(sesion && sesion.rol==="admin")){ toast("Solo el administrador general puede hacer esto"); return; }
   if(!confirm("¿Buscar y eliminar vehículos con placa duplicada? Esta acción no se puede deshacer.")) return;
