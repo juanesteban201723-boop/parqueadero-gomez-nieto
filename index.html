@@ -1967,7 +1967,6 @@ async function descargarPDFsLista(lista, botonId){
 
 document.getElementById("btn-pdf-secretaria").addEventListener("click", ()=>{
   const { periodo, salidas } = renderInformeSecretaria();
-  if(!salidas.length){ toast("No hay vehículos con salida en esta semana"); return; }
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({unit:"pt", format:"a4"});
   const mx = 40, ancho = 595;
@@ -1986,18 +1985,26 @@ document.getElementById("btn-pdf-secretaria").addEventListener("click", ()=>{
     totalSecretaria += c.secretaria;
     return [v.placa, t?t.nombre:"—", motivoLabel(v.motivo), fechaCorta(v.salidaFecha), fmt(c.total), fmt(c.secretaria)];
   });
-  doc.autoTable({
-    startY: 92,
-    margin: {left:mx, right:mx},
-    head: [["Placa","Tipo","Motivo","Salió","Total cobrado","10% Secretaría"]],
-    body: filas,
-    theme: "striped",
-    styles: { font:"helvetica", fontSize:8.5, cellPadding:5, textColor:[30,30,30], lineColor:[225,225,225], lineWidth:0.4 },
-    headStyles: { fillColor:[28,31,34], textColor:255, fontStyle:"bold", fontSize:8.5 },
-    alternateRowStyles: { fillColor:[244,245,246] },
-    columnStyles: { 4:{halign:"right"}, 5:{halign:"right"} },
-  });
-  let y = doc.lastAutoTable.finalY + 26;
+  let y;
+  if(salidas.length){
+    doc.autoTable({
+      startY: 92,
+      margin: {left:mx, right:mx},
+      head: [["Placa","Tipo","Motivo","Salió","Total cobrado","10% Secretaría"]],
+      body: filas,
+      theme: "striped",
+      styles: { font:"helvetica", fontSize:8.5, cellPadding:5, textColor:[30,30,30], lineColor:[225,225,225], lineWidth:0.4 },
+      headStyles: { fillColor:[28,31,34], textColor:255, fontStyle:"bold", fontSize:8.5 },
+      alternateRowStyles: { fillColor:[244,245,246] },
+      columnStyles: { 4:{halign:"right"}, 5:{halign:"right"} },
+    });
+    y = doc.lastAutoTable.finalY + 26;
+  } else {
+    doc.setFont("helvetica","italic"); doc.setFontSize(10.5); doc.setTextColor(120,120,120);
+    doc.text("No hubo vehículos con salida durante esta semana.", mx, 100);
+    doc.setTextColor(0,0,0);
+    y = 130;
+  }
   if(y > 760){ doc.addPage(); y = 50; }
   doc.setFillColor(28,31,34); doc.roundedRect(mx, y, ancho-mx*2, 34, 6, 6, "F");
   doc.setTextColor(255,255,255); doc.setFont("helvetica","bold"); doc.setFontSize(12);
