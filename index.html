@@ -209,6 +209,8 @@
         <input type="text" id="p-buscar-placa" placeholder="Escribe la placa...">
         <button class="btn" id="p-btn-buscar">Buscar</button>
       </div>
+      <p class="subtle" style="margin:10px 0 0 0;">¿El vehículo llegó sin pasar por ninguna grúa registrada (lo trajo la Policía, un particular, etc.)?</p>
+      <button class="btn secondary" id="p-btn-ingreso-directo" style="width:100%; margin-top:8px;">+ Registrar ingreso directo (sin grúa)</button>
       <div id="p-resultado"></div>
     </div>
     <div class="card">
@@ -245,7 +247,6 @@
   <div class="panel" id="panel-salida-transito">
     <div class="card" style="margin-bottom:20px;">
       <h3>Consultar vehículo</h3>
-      <p class="subtle" style="margin-top:0;">Este módulo es solo de consulta — no se puede confirmar ninguna salida desde aquí.</p>
       <div class="buscador-placa">
         <input type="text" id="st-buscar-placa" placeholder="Escribe la placa...">
         <button class="btn" id="st-btn-buscar">Buscar</button>
@@ -632,6 +633,26 @@ async function borrarVehiculoDoc(id){ try{ await vehiculosCol.doc(id).delete(); 
 async function guardarUsuario(u){ try{ await usuariosCol.doc(u.id).set(u); }catch(e){ console.error(e); toast("⚠ No se pudo guardar en la nube."); } }
 async function borrarUsuarioDoc(id){ try{ await usuariosCol.doc(id).delete(); }catch(e){ console.error(e); } }
 async function guardarGrua(g){ try{ await gruasCol.doc(g.id).set(g); }catch(e){ console.error(e); toast("⚠ No se pudo guardar en la nube."); } }
+// Consecutivos a prueba de varias personas usando la app al mismo tiempo:
+// se reserva el número dentro de una transacción de Firestore, así dos celulares
+// nunca pueden llevarse el mismo número aunque registren en el mismo segundo.
+async function siguienteNumero(campo){
+  const ref = configCol.doc("contadores");
+  try{
+    const asignado = await dbFire.runTransaction(async (tx) => {
+      const doc = await tx.get(ref);
+      const actual = (doc.exists && doc.data()[campo]) || 1;
+      tx.set(ref, {[campo]: actual+1}, {merge:true});
+      return actual;
+    });
+    db[campo] = asignado + 1;
+    return asignado;
+  }catch(e){
+    console.error("Error asignando consecutivo", e);
+    toast("⚠ No se pudo reservar el número, intenta de nuevo.");
+    throw e;
+  }
+}
 async function borrarGruaDoc(id){ try{ await gruasCol.doc(id).delete(); }catch(e){ console.error(e); } }
 async function guardarGasto(g){ try{ await gastosCol.doc(g.id).set(g); }catch(e){ console.error(e); toast("⚠ No se pudo guardar en la nube."); } }
 async function borrarGastoDoc(id){ try{ await gastosCol.doc(id).delete(); }catch(e){ console.error(e); } }
@@ -643,11 +664,19 @@ function saveDB(){}
 
 let db = { tarifas: TARIFAS_DEFAULT, vehiculos: [], usuarios: [], gruas: [], gastos: [], consecutivoInventario: 1, consecutivoSalida: 1 };
 
-vehiculosCol.onSnapshot(snap=>{ db.vehiculos = snap.docs.map(d=>d.data()); renderAll(); }, err=>{ console.error(err); toast("⚠ Sin conexión con la base de datos en la nube."); });
-usuariosCol.onSnapshot(snap=>{ db.usuarios = snap.docs.map(d=>({id:d.id, ...d.data()})); renderAll(); actualizarCampoOperadorGrua(); }, err=>console.error(err));
-gruasCol.onSnapshot(snap=>{ db.gruas = snap.docs.map(d=>d.data()); renderAll(); }, err=>console.error(err));
-gastosCol.onSnapshot(snap=>{ db.gastos = snap.docs.map(d=>d.data()); renderAll(); }, err=>console.error(err));
-configCol.doc("tarifas").onSnapshot(doc=>{ db.tarifas = (doc.exists && doc.data().lista && doc.data().lista.length) ? doc.data().lista : TARIFAS_DEFAULT; renderAll(); }, err=>console.error(err));
+// Si varias personas escriben casi al mismo tiempo, agrupamos esas actualizaciones
+// en una sola repintada en vez de una por cada cambio (evita que la app se sienta lenta).
+let __renderAllPendiente = null;
+function renderAllDebounced(){
+  clearTimeout(__renderAllPendiente);
+  __renderAllPendiente = setTimeout(renderAll, 150);
+}
+
+vehiculosCol.onSnapshot(snap=>{ db.vehiculos = snap.docs.map(d=>d.data()); renderAllDebounced(); }, err=>{ console.error(err); toast("⚠ Sin conexión con la base de datos en la nube."); });
+usuariosCol.onSnapshot(snap=>{ db.usuarios = snap.docs.map(d=>({id:d.id, ...d.data()})); renderAllDebounced(); actualizarCampoOperadorGrua(); }, err=>console.error(err));
+gruasCol.onSnapshot(snap=>{ db.gruas = snap.docs.map(d=>d.data()); renderAllDebounced(); }, err=>console.error(err));
+gastosCol.onSnapshot(snap=>{ db.gastos = snap.docs.map(d=>d.data()); renderAllDebounced(); }, err=>console.error(err));
+configCol.doc("tarifas").onSnapshot(doc=>{ db.tarifas = (doc.exists && doc.data().lista && doc.data().lista.length) ? doc.data().lista : TARIFAS_DEFAULT; renderAllDebounced(); }, err=>console.error(err));
 configCol.doc("contadores").onSnapshot(doc=>{ if(doc.exists){ db.consecutivoInventario = doc.data().consecutivoInventario||1; db.consecutivoSalida = doc.data().consecutivoSalida||1; } }, err=>console.error(err));
 
 // Carga inicial (los 812 vehículos importados del Excel) — se siembra UNA sola vez, cuando se registra el primer administrador
@@ -840,14 +869,20 @@ function diasCobrados(desdeIso, hastaIso){
 function calcularCostos(v){
   const t = tarifaDe(v.tipoId);
   const dias = v.estado==="transito" ? 0 : diasCobrados(v.patioFecha, v.salidaFecha);
-  const valorParqueo = t ? t.parqueo*dias : 0;
-  const valorGrua = (v.operadorId && t) ? t.grua : 0;
+  let valorParqueo = t ? t.parqueo*dias : 0;
+  let valorGrua = (v.operadorId && t) ? t.grua : 0;
+  const descPctParqueo = Number(v.descPctParqueo) || 0;
+  const descPctGrua = Number(v.descPctGrua) || 0;
+  const valorParqueoSinDescuento = valorParqueo;
+  const valorGruaSinDescuento = valorGrua;
+  if(descPctParqueo>0) valorParqueo = valorParqueo * (1 - Math.min(descPctParqueo,100)/100);
+  if(descPctGrua>0) valorGrua = valorGrua * (1 - Math.min(descPctGrua,100)/100);
   const total = valorParqueo + valorGrua;
 
   // Los descuentos a Secretaría y Pagos a terceros solo aplican para comparendo.
   // En accidente no se comparte nada: el 100% queda para el parqueadero/grúa.
   if(v.motivo === "accidente"){
-    return { dias, valorParqueo, valorGrua, total, secretaria:0, resto90: total, pagosTerceros:0, gruaNeta: valorGrua, parqueoNeto: valorParqueo };
+    return { dias, valorParqueo, valorGrua, valorParqueoSinDescuento, valorGruaSinDescuento, descPctParqueo, descPctGrua, total, secretaria:0, resto90: total, pagosTerceros:0, gruaNeta: valorGrua, parqueoNeto: valorParqueo };
   }
 
   const secretaria = total * PCT_SECRETARIA;
@@ -857,7 +892,7 @@ function calcularCostos(v){
   const pagosTerceros = resto90 * PCT_TERCEROS;
   const gruaNeta = gruaResto90 * (1-PCT_TERCEROS);
   const parqueoNeto = parqueoResto90 * (1-PCT_TERCEROS);
-  return { dias, valorParqueo, valorGrua, total, secretaria, resto90, pagosTerceros, gruaNeta, parqueoNeto };
+  return { dias, valorParqueo, valorGrua, valorParqueoSinDescuento, valorGruaSinDescuento, descPctParqueo, descPctGrua, total, secretaria, resto90, pagosTerceros, gruaNeta, parqueoNeto };
 }
 
 /* ---------- Reloj ---------- */
@@ -973,7 +1008,7 @@ function verFoto(src){ document.getElementById("modal-foto-img").src = src; docu
 document.getElementById("btn-cerrar-foto").addEventListener("click", ()=> document.getElementById("modal-foto").classList.remove("active"));
 
 /* ---------- FORM RECEPCIÓN GRÚA ---------- */
-document.getElementById("form-grua").addEventListener("submit", e=>{
+document.getElementById("form-grua").addEventListener("submit", async e=>{
   e.preventDefault();
   const placa = document.getElementById("g-placa").value.trim().toUpperCase();
   if(!placa){ toast("Ingresa la placa"); return; }
@@ -982,7 +1017,11 @@ document.getElementById("form-grua").addEventListener("submit", e=>{
   const operadorIdFinal = (sesion && sesion.rol==="grua") ? sesion.empresaId : selGOperador.value;
   const conductorNombreFinal = (sesion && sesion.rol==="grua") ? sesion.nombre : null;
   const gruaUnidadIdFinal = (document.getElementById("g-unidad-wrap").style.display !== "none") ? document.getElementById("g-unidad").value : null;
-  const numeroInventario = db.consecutivoInventario;
+  const btnSubmit = e.target.querySelector('button[type="submit"], .btn');
+  if(btnSubmit) btnSubmit.disabled = true;
+  let numeroInventario;
+  try{ numeroInventario = await siguienteNumero("consecutivoInventario"); }
+  catch(err){ if(btnSubmit) btnSubmit.disabled = false; return; }
   const veh = {
     id: uid(), placa,
     numeroInventario,
@@ -1001,13 +1040,12 @@ document.getElementById("form-grua").addEventListener("submit", e=>{
     salidaFecha: null, ordenSalida: null, liquidado: false,
   };
   db.vehiculos.push(veh);
-  db.consecutivoInventario++;
-  guardarVehiculo(veh);
-  guardarContadores();
+  await guardarVehiculo(veh);
   toast(`Vehículo ${placa} registrado con inventario N.° ${numeroInventario} — en camino al parqueadero`);
   document.getElementById("form-grua").reset();
   fotosGruaTemp = []; renderFotosPreview("g-fotos-preview", fotosGruaTemp, "quitarFotoGrua");
   poblarTipos(selGTipo);
+  if(btnSubmit) btnSubmit.disabled = false;
   renderAll();
 });
 
@@ -1017,6 +1055,14 @@ let patioVehId = null;
 
 document.getElementById("p-btn-buscar").addEventListener("click", buscarParaPatio);
 document.getElementById("p-buscar-placa").addEventListener("keydown", e=>{ if(e.key==="Enter") buscarParaPatio(); });
+document.getElementById("p-btn-ingreso-directo").addEventListener("click", ()=>{
+  const placa = document.getElementById("p-buscar-placa").value.trim().toUpperCase();
+  if(placa && db.vehiculos.some(x=>x.placa===placa && x.estado!=="salido")){
+    toast("Ya hay un vehículo activo con esa placa");
+    return;
+  }
+  mostrarFormularioIngresoDirecto(placa);
+});
 
 function buscarParaPatio(){
   const placa = document.getElementById("p-buscar-placa").value.trim().toUpperCase();
@@ -1051,14 +1097,21 @@ function mostrarFormularioIngresoDirecto(placa){
         <option value="comparendo">Comparendo</option>
         <option value="accidente">Accidente</option>
       </select>
-      <label>¿Quién lo trae?</label>
-      <select id="pd-traidopor">
-        <option value="policia">Policía</option>
-        <option value="otro">Otro</option>
+      <label>¿Qué operador de grúa lo trajo?</label>
+      <select id="pd-empresa">
+        <option value="">— Ninguno (no llegó por una grúa registrada) —</option>
+        ${EMPRESAS_OPERADORAS.map(e=>`<option value="${e.id}">${e.nombre}</option>`).join("")}
       </select>
-      <div id="pd-traidopor-otro-wrap" style="display:none;">
-        <label>Especifica quién lo trae</label>
-        <input type="text" id="pd-traidopor-otro" placeholder="Ej: Nombre del particular, grúa externa, etc.">
+      <div id="pd-traidopor-wrap">
+        <label>¿Quién lo trae?</label>
+        <select id="pd-traidopor">
+          <option value="policia">Policía</option>
+          <option value="otro">Otro</option>
+        </select>
+        <div id="pd-traidopor-otro-wrap" style="display:none;">
+          <label>Especifica quién lo trae</label>
+          <input type="text" id="pd-traidopor-otro" placeholder="Ej: Nombre del particular, grúa externa, etc.">
+        </div>
       </div>
       <label>Observaciones / daños al recibirlo</label>
       <input type="text" id="pd-obs" placeholder="Estado en que llega...">
@@ -1069,6 +1122,9 @@ function mostrarFormularioIngresoDirecto(placa){
     </div>
   `;
   poblarTipos(document.getElementById("pd-tipo"));
+  document.getElementById("pd-empresa").addEventListener("change", e=>{
+    document.getElementById("pd-traidopor-wrap").style.display = e.target.value ? "none" : "block";
+  });
   document.getElementById("pd-traidopor").addEventListener("change", e=>{
     document.getElementById("pd-traidopor-otro-wrap").style.display = e.target.value==="otro" ? "block" : "none";
   });
@@ -1079,22 +1135,31 @@ function mostrarFormularioIngresoDirecto(placa){
   });
   document.getElementById("pd-btn-confirmar").addEventListener("click", confirmarIngresoDirecto);
 }
-function confirmarIngresoDirecto(){
+async function confirmarIngresoDirecto(){
   if(!sesion){ toast("Inicia sesión primero"); return; }
   const placa = document.getElementById("pd-placa").value.trim().toUpperCase();
   if(!placa){ toast("Ingresa la placa"); return; }
   if(db.vehiculos.some(v=>v.placa===placa && v.estado!=="salido")){ toast("Ya existe un vehículo activo con esa placa"); return; }
-  const traidoPorSel = document.getElementById("pd-traidopor").value;
-  const traidoPorTxt = traidoPorSel==="policia" ? "Policía" : (document.getElementById("pd-traidopor-otro").value.trim() || "Otro");
+  const empresaSel = document.getElementById("pd-empresa").value;
+  let traidoPorTxt = null;
+  if(!empresaSel){
+    const traidoPorSel = document.getElementById("pd-traidopor").value;
+    traidoPorTxt = traidoPorSel==="policia" ? "Policía" : (document.getElementById("pd-traidopor-otro").value.trim() || "Otro");
+  }
+  const btn = document.getElementById("pd-btn-confirmar");
+  btn.disabled = true;
+  let numeroInventario;
+  try{ numeroInventario = await siguienteNumero("consecutivoInventario"); }
+  catch(err){ btn.disabled = false; return; }
   const ahora = new Date().toISOString();
   const veh = {
     id: uid(), placa,
-    numeroInventario: db.consecutivoInventario,
+    numeroInventario,
     tipoId: document.getElementById("pd-tipo").value,
     marca: document.getElementById("pd-marca").value.trim(),
     color: document.getElementById("pd-color").value.trim(),
     motivo: document.getElementById("pd-motivo").value,
-    operadorId: null, conductorNombre: null, gruaUnidadId: null,
+    operadorId: empresaSel || null, conductorNombre: null, gruaUnidadId: null,
     traidoPor: traidoPorTxt,
     gruaDanos: "", gruaFotos: [],
     gruaFecha: ahora,
@@ -1106,9 +1171,7 @@ function confirmarIngresoDirecto(){
     salidaFecha: null, ordenSalida: null, liquidado: false,
   };
   db.vehiculos.push(veh);
-  db.consecutivoInventario++;
-  guardarVehiculo(veh);
-  guardarContadores();
+  await guardarVehiculo(veh);
   toast(`${veh.placa} registrado directamente en el patio — inicia el cobro diario`);
   document.getElementById("p-resultado").innerHTML = "";
   document.getElementById("p-buscar-placa").value = "";
@@ -1452,7 +1515,6 @@ function buscarParaSalidaTransito(){
     <div class="split-box"><div class="flex-between"><span class="lbl">Grúa (único)</span><span class="val mono">${fmt(c.valorGrua)}</span></div></div>
     <div class="divider"></div>
     <div class="split-box" style="border-color:var(--amarillo);"><div class="flex-between"><span class="lbl">TOTAL</span><span class="val mono" style="color:var(--amarillo); font-size:24px;">${fmt(c.total)}</span></div></div>
-    <p class="subtle" style="margin-top:10px;">Este módulo es solo de consulta — la salida la confirma Secretaría desde su propio módulo.</p>
     <button class="btn" style="width:100%; margin-top:10px;" onclick="generarInventarioPDF('${v.id}')">Descargar inventario (PDF)</button>
   `;
 }
@@ -1470,8 +1532,13 @@ function buscarParaSalida(){
     return;
   }
   fotoAutorizaTemp = null;
+  renderTicketSalida(v);
+}
+function renderTicketSalida(v){
+  const cont = document.getElementById("s-resultado");
   const t = tarifaDe(v.tipoId); const op = operadorDe(v.operadorId);
   const c = calcularCostos(v);
+  const puedeDescuento = sesion && (sesion.rol==="admin" || sesion.rol==="administrador");
   cont.innerHTML = `
     <div class="ticket-row ${v.motivo}" style="margin-bottom:16px;">
       <div class="ticket-plate">${v.placa}</div>
@@ -1480,8 +1547,17 @@ function buscarParaSalida(){
         <div class="t2">Ingresó al patio: ${fechaCorta(v.patioFecha)} · ${c.dias} día(s) cobrados · Grúa: ${nombreConductor(v)}</div>
       </div>
     </div>
-    <div class="split-box"><div class="flex-between"><span class="lbl">Parqueadero (${fmt(t.parqueo)} × ${c.dias})</span><span class="val mono">${fmt(c.valorParqueo)}</span></div></div>
-    <div class="split-box"><div class="flex-between"><span class="lbl">Grúa (único)</span><span class="val mono">${fmt(c.valorGrua)}</span></div></div>
+    ${puedeDescuento ? `
+    <div class="card" style="border-color:var(--amarillo); padding:14px; margin-bottom:14px;">
+      <h3 style="margin:0 0 10px 0;">Descuento autorizado</h3>
+      <div class="grid grid-2">
+        <div><label>% Descuento parqueo</label><input type="number" id="s-desc-parqueo" min="0" max="100" value="${v.descPctParqueo||0}"></div>
+        <div><label>% Descuento grúa</label><input type="number" id="s-desc-grua" min="0" max="100" value="${v.descPctGrua||0}"></div>
+      </div>
+    </div>
+    ` : ""}
+    <div class="split-box"><div class="flex-between"><span class="lbl">Parqueadero (${fmt(t.parqueo)} × ${c.dias})${c.descPctParqueo>0?` · descuento ${c.descPctParqueo}%`:""}</span><span class="val mono">${fmt(c.valorParqueo)}</span></div></div>
+    <div class="split-box"><div class="flex-between"><span class="lbl">Grúa (único)${c.descPctGrua>0?` · descuento ${c.descPctGrua}%`:""}</span><span class="val mono">${fmt(c.valorGrua)}</span></div></div>
     <div class="divider"></div>
     <div class="split-box" style="border-color:var(--amarillo);"><div class="flex-between"><span class="lbl">TOTAL A COBRAR</span><span class="val mono" style="color:var(--amarillo); font-size:24px;">${fmt(c.total)}</span></div></div>
     <div class="divider"></div>
@@ -1502,6 +1578,16 @@ function buscarParaSalida(){
     ` : ""}
     <button class="btn" style="width:100%; margin-top:10px;" onclick="confirmarSalida('${v.id}')">Confirmar salida y liquidar</button>
   `;
+  if(puedeDescuento){
+    document.getElementById("s-desc-parqueo").addEventListener("input", e=>{
+      v.descPctParqueo = Math.max(0, Math.min(100, Number(e.target.value)||0));
+      renderTicketSalida(v);
+    });
+    document.getElementById("s-desc-grua").addEventListener("input", e=>{
+      v.descPctGrua = Math.max(0, Math.min(100, Number(e.target.value)||0));
+      renderTicketSalida(v);
+    });
+  }
   if(v.motivo === "accidente"){
     document.getElementById("s-autoriza-foto").addEventListener("change", async e=>{
       const f = e.target.files[0];
@@ -1513,18 +1599,19 @@ function buscarParaSalida(){
     });
   }
 }
-function confirmarSalida(vehId){
+async function confirmarSalida(vehId){
   const v = db.vehiculos.find(x=>x.id===vehId); if(!v) return;
   if(v.motivo === "accidente"){
     if(!fotoAutorizaTemp){ toast("Adjunta la foto del oficio que autoriza la entrega"); return; }
     v.autorizaEntrega = { foto: fotoAutorizaTemp };
   }
+  let ordenSalida;
+  try{ ordenSalida = await siguienteNumero("consecutivoSalida"); }
+  catch(err){ return; }
   v.salidaFecha = new Date().toISOString();
   v.estado = "salido";
-  v.ordenSalida = db.consecutivoSalida;
-  db.consecutivoSalida++;
-  guardarVehiculo(v);
-  guardarContadores();
+  v.ordenSalida = ordenSalida;
+  await guardarVehiculo(v);
   toast(`Salida de ${v.placa} registrada — Orden de salida N.° ${v.ordenSalida}`);
   document.getElementById("s-resultado").innerHTML = "";
   document.getElementById("s-buscar-placa").value = "";
@@ -1574,9 +1661,24 @@ function abrirLiquidar(opId){
 document.getElementById("btn-cancelar-liquidar").addEventListener("click", ()=> document.getElementById("modal-liquidar").classList.remove("active"));
 document.getElementById("btn-confirmar-liquidar").addEventListener("click", ()=>{
   const vehiculosALiquidar = db.vehiculos.filter(v=>v.operadorId===liquidarOpId && v.estado==="salido" && !v.liquidado);
+  const total = vehiculosALiquidar.reduce((s,v)=> s + calcularCostos(v).gruaNeta, 0);
+  const op = operadorDe(liquidarOpId);
   vehiculosALiquidar.forEach(v=>{ v.liquidado = true; guardarVehiculo(v); });
+  if(total > 0){
+    const gasto = {
+      id: uid(),
+      fecha: new Date().toISOString(),
+      categoria: "grua",
+      descripcion: `Liquidación a ${op?op.nombre:"operador"} — ${vehiculosALiquidar.length} vehículo(s): ${vehiculosALiquidar.map(v=>v.placa).join(", ")}`,
+      valor: Math.round(total),
+      comprobante: null,
+      registradoPor: sesion ? sesion.nombre : "—",
+    };
+    db.gastos.push(gasto);
+    guardarGasto(gasto);
+  }
   document.getElementById("modal-liquidar").classList.remove("active");
-  toast("Pago liquidado");
+  toast(`Pago liquidado — se registró automáticamente como gasto (${fmt(total)})`);
   renderAll();
 });
 
@@ -1788,17 +1890,19 @@ function actualizarPreviewImport(){
   document.getElementById("imp-preview").textContent = `Se detectaron ${filas.length} vehículo(s) con placa en esta hoja, listos para importar.`;
 }
 
-document.getElementById("imp-btn-importar").addEventListener("click", ()=>{
+document.getElementById("imp-btn-importar").addEventListener("click", async ()=>{
   const filas = leerFilasImportacion();
   if(!filas.length){ toast("No hay vehículos para importar en esta hoja"); return; }
   const motivo = document.getElementById("imp-motivo").value;
   const operadorId = document.getElementById("imp-operador").value;
+  const btnImportar = document.getElementById("imp-btn-importar");
+  btnImportar.disabled = true;
 
   let importados = 0, omitidos = 0, tipoNoReconocido = 0;
-  filas.forEach(row=>{
+  for(const row of filas){
     const placa = (row[1]||"").toString().trim().toUpperCase();
-    if(!placa){ return; }
-    if(db.vehiculos.some(v=>v.placa===placa && v.estado!=="salido")){ omitidos++; return; }
+    if(!placa){ continue; }
+    if(db.vehiculos.some(v=>v.placa===placa && v.estado!=="salido")){ omitidos++; continue; }
 
     const fecha = parsearFechaExcel(row[0]);
 
@@ -1819,7 +1923,9 @@ document.getElementById("imp-btn-importar").addEventListener("click", ()=>{
 
     const marca = (row[3]||"").toString().trim() || "No registrado";
     const color = (row[4]||"").toString().trim() || "No registrado";
-    const numeroInventario = db.consecutivoInventario;
+    let numeroInventario;
+    try{ numeroInventario = await siguienteNumero("consecutivoInventario"); }
+    catch(err){ continue; }
 
     const vehiculoImportado = {
       id: uid(), placa, numeroInventario,
@@ -1835,12 +1941,10 @@ document.getElementById("imp-btn-importar").addEventListener("click", ()=>{
       salidaFecha: null, ordenSalida: null, liquidado: false,
     };
     db.vehiculos.push(vehiculoImportado);
-    db.consecutivoInventario++;
     importados++;
-    guardarVehiculo(vehiculoImportado);
-  });
+    await guardarVehiculo(vehiculoImportado);
+  }
 
-  guardarContadores();
   let msg = `Se importaron ${importados} vehículo(s).`;
   if(omitidos) msg += ` ${omitidos} se omitieron por tener ya una placa activa igual.`;
   if(tipoNoReconocido) msg += ` ${tipoNoReconocido} quedaron con tipo "Automóvil" por defecto (revísalos en Inventario).`;
@@ -1849,6 +1953,7 @@ document.getElementById("imp-btn-importar").addEventListener("click", ()=>{
   document.getElementById("imp-archivo").value = "";
   document.getElementById("imp-config").style.display = "none";
   window.impWorkbook = null;
+  btnImportar.disabled = false;
   renderAll();
 });
 
@@ -2429,16 +2534,21 @@ function renderBalances(){
 }
 
 /* ---------- Render general ---------- */
+function panelVisible(id){
+  const p = document.getElementById("panel-"+id);
+  return p && p.classList.contains("active");
+}
 function renderAll(){
-  renderDashboard();
-  renderListaTransito();
-
-  renderLiquidaciones();
-  renderInformes();
-  renderOperadoresTab();
-  renderTarifas();
-  renderGastos();
-  renderBalances();
+  // Rendimiento con varios usuarios conectados a la vez: solo se vuelve a dibujar
+  // el módulo que esta persona tiene abierto en pantalla, no los 8 al tiempo.
+  if(panelVisible("dashboard")) renderDashboard();
+  if(panelVisible("patio")) renderListaTransito();
+  if(panelVisible("liquidaciones")) renderLiquidaciones();
+  if(panelVisible("informes")) renderInformes();
+  if(panelVisible("operadores")) renderOperadoresTab();
+  if(panelVisible("tarifas")) renderTarifas();
+  if(panelVisible("pagos")) renderGastos();
+  if(panelVisible("balances")) renderBalances();
 }
 const MAPA_FECHAS_VERIFICADO = {"JCM23D": "2025-01-07T12:00:00", "HQA54A": "2025-01-11T12:00:00", "CPU080": "2025-01-11T12:00:00", "SFH20E": "2025-01-14T12:00:00", "GND80B": "2025-01-14T12:00:00", "GSZ015": "2025-01-18T12:00:00", "GST784": "2025-01-18T12:00:00", "WFC96C": "2025-01-22T12:00:00", "KAW65D": "2025-01-24T12:00:00", "OSQ36F": "2025-01-25T12:00:00", "VDP039": "2025-01-25T12:00:00", "ARQ630": "2025-01-27T12:00:00", "WPH58A": "2025-01-27T12:00:00", "EGX02C": "2025-01-28T12:00:00", "CHP40E": "2025-01-28T12:00:00", "HCT95A": "2025-01-28T12:00:00", "PYK008": "2025-01-30T12:00:00", "BAV576": "2025-02-05T12:00:00", "YKC32G": "2025-02-10T12:00:00", "IUP14C": "2025-02-11T12:00:00", "GTY65E": "2025-02-13T12:00:00", "KPF34B": "2025-02-17T12:00:00", "967AAU": "2025-02-18T12:00:00", "YJM54C": "2025-02-18T12:00:00", "CBE269": "2025-02-18T12:00:00", "FHM20B": "2025-02-20T12:00:00", "SIN PLACA": "2025-02-24T12:00:00", "KLK64C": "2025-02-24T12:00:00", "YTH30G": "2025-02-24T12:00:00", "RQZ39C": "2025-02-26T12:00:00", "AUI11C": "2025-02-26T12:00:00", "WGD44C": "2025-02-27T12:00:00", "HZX446": "2025-02-28T12:00:00", "CBA330": "2025-02-28T12:00:00", "ZKU45A": "2025-02-28T12:00:00", "3431.0": "2025-02-28T12:00:00", "GNP234": "2025-03-01T12:00:00", "IPS55E": "2025-03-01T12:00:00", "NTY13F": "2025-03-01T12:00:00", "BXS13C": "2025-03-03T12:00:00", "EPK20C": "2025-03-03T12:00:00", "KUX90C": "2025-03-03T12:00:00", "CAT030": "2025-03-03T12:00:00", "IIV67A": "2025-03-03T12:00:00", "EIU34C": "2025-03-03T12:00:00", "MWU97B": "2025-03-03T12:00:00", "HLY81A": "2025-03-03T12:00:00", "UQQ60D": "2025-03-03T12:00:00", "IVJ69C": "2025-03-04T12:00:00", "PFQ62F": "2025-03-07T12:00:00", "QET272": "2025-03-07T12:00:00", "MWC66B": "2025-03-07T12:00:00", "PMD80B": "2025-03-10T12:00:00", "JMJ28E": "2025-03-10T12:00:00", "COM237": "2025-03-10T12:00:00", "IYW868": "2025-03-10T12:00:00", "CPN026": "2025-03-11T12:00:00", "VAF810": "2025-03-11T12:00:00", "OZD73": "2025-03-11T12:00:00", "CBO06A": "2025-03-11T12:00:00", "PBL11C": "2025-03-12T12:00:00", "VQS49E": "2025-03-13T12:00:00", "BJN479": "2025-03-13T12:00:00", "WYX10C": "2025-03-14T12:00:00", "KRH08F": "2025-03-14T12:00:00", "MJW26B": "2025-03-15T12:00:00", "FOX59H": "2025-03-17T12:00:00", "AKE32E": "2025-03-17T12:00:00", "HLM04A": "2025-03-17T12:00:00", "QEV43E": "2025-03-18T12:00:00", "YFW08C": "2025-03-18T12:00:00", "DBC815": "2025-03-18T12:00:00", "MGC03A": "2025-03-18T12:00:00", "ADM94E": "2025-03-20T12:00:00", "VOQ30A": "2025-03-21T12:00:00", "TPX70A": "2025-03-21T12:00:00", "GNN70B": "2025-03-22T12:00:00", "IBX63A": "2025-03-22T12:00:00", "ZWQ55": "2025-03-22T12:00:00", "WYZ13A": "2025-03-22T12:00:00", "HAD18C": "2025-03-22T12:00:00", "HCM56A": "2025-03-23T12:00:00", "WUT72D": "2025-03-25T12:00:00", "OFB78G": "2025-03-25T12:00:00", "CMP57E": "2025-03-27T12:00:00", "DSL09B": "2025-03-29T12:00:00", "JBD78G": "2025-03-31T12:00:00", "TJA59G": "2025-03-31T12:00:00", "DYK23C": "2025-03-31T12:00:00", "DZQ39C": "2025-04-01T12:00:00", "QLB20D": "2025-04-01T12:00:00", "HLY40A": "2025-04-01T12:00:00", "HSP90D": "2025-04-01T12:00:00", "QON69D": "2025-04-01T12:00:00", "WHU595": "2025-04-01T12:00:00", "DDP12D": "2025-04-02T12:00:00", "PLQ055": "2025-04-02T12:00:00", "CMI784": "2025-04-02T12:00:00", "": "2025-04-02T12:00:00", "WMV564": "2025-04-02T12:00:00", "FRB14A": "2025-04-02T12:00:00", "KBJ96E": "2025-04-02T12:00:00", "OZB55": "2025-04-03T12:00:00", "CPX395": "2025-04-03T12:00:00", "TOR96A": "2025-04-03T12:00:00", "XWQ29D": "2025-04-08T12:00:00", "DJS36B": "2025-04-09T12:00:00", "JOU87B": "2025-04-10T12:00:00", "TFQ04G": "2025-04-10T12:00:00", "YHT29C": "2025-04-12T12:00:00", "TDI49E": "2025-04-12T12:00:00", "KND65C": "2025-04-12T12:00:00", "ACJ40E": "2025-04-14T12:00:00", "TFY98G": "2025-04-14T12:00:00", "HOE20E": "2025-04-15T12:00:00", "KCW87B": "2025-04-15T12:00:00", "FEJ45C": "2025-04-16T12:00:00", "TER78G": "2025-04-16T12:00:00", "KLP523": "2025-04-17T12:00:00", "ZBH47D": "2025-04-17T12:00:00", "QGI55D": "2025-04-21T12:00:00", "APP92C": "2025-04-22T12:00:00", "KQJ26A": "2025-04-22T12:00:00", "BVR98": "2025-04-22T12:00:00", "MLX01G": "2025-04-22T12:00:00", "XTD02C": "2025-04-24T12:00:00", "ACW78D": "2025-04-24T12:00:00", "KPA70B": "2025-04-24T12:00:00", "VQV50G": "2025-04-24T12:00:00", "HUU71A": "2025-04-24T12:00:00", "NPD29D": "2025-04-24T12:00:00", "WGF86C": "2025-04-24T12:00:00", "JKM98B": "2025-04-26T12:00:00", "GZI52C": "2025-04-26T12:00:00", "SKZ25B": "2025-04-28T12:00:00", "FHI84B": "2025-04-29T12:00:00", "QFD81D": "2025-04-29T12:00:00", "PKF81F": "2025-04-29T12:00:00", "FTS40D": "2025-04-29T12:00:00", "WWE48C": "2025-04-29T12:00:00", "BGR42D": "2025-04-29T12:00:00", "MAL121": "2025-05-02T12:00:00", "VXE70G": "2025-05-02T12:00:00", "BWB33D": "2025-05-02T12:00:00", "KQM27E": "2025-05-02T12:00:00", "ZKI16A": "2025-05-02T12:00:00", "KOV45A": "2025-05-02T12:00:00", "LPA95F": "2025-05-05T12:00:00", "CFT262": "2025-05-07T12:00:00", "PNJ19G": "2025-05-07T12:00:00", "TGN93F": "2025-05-07T12:00:00", "KQE53G": "2025-05-07T12:00:00", "KQI04B": "2025-05-08T12:00:00", "IVX54C": "2025-05-08T12:00:00", "KZV13H": "2025-05-08T12:00:00", "EQN21E": "2025-05-08T12:00:00", "CNA487": "2025-05-08T12:00:00", "EQK549": "2025-05-08T12:00:00", "GRF319": "2025-05-08T12:00:00", "BMQ251": "2025-05-08T12:00:00", "PYA14D": "2025-05-08T12:00:00", "BMC24B": "2025-05-08T12:00:00", "UTL34C": "2025-05-08T12:00:00", "FTZ17D": "2025-05-08T12:00:00", "MWT402": "2025-05-09T12:00:00", "GFR703": "2025-05-09T12:00:00", "GGP106": "2025-05-09T12:00:00", "NOR12F": "2025-05-09T12:00:00", "LEX671": "2025-05-09T12:00:00", "KNL958": "2025-05-09T12:00:00", "RLI42D": "2025-05-09T12:00:00", "ZLB47G": "2025-05-09T12:00:00", "YWW92C": "2025-05-09T12:00:00", "JIN93F": "2025-05-12T12:00:00", "ZGN17A": "2025-05-12T12:00:00", "RAF05E": "2025-05-12T12:00:00", "XSB35F": "2025-05-12T12:00:00", "LTL638": "2025-05-12T12:00:00", "AUK97D": "2025-05-12T12:00:00", "HUM84A": "2025-05-12T12:00:00", "ENU185": "2025-05-13T12:00:00", "ZMK45G": "2025-05-13T12:00:00", "NJG47F": "2025-05-13T12:00:00", "?": "2025-05-13T12:00:00", "ZOI27C": "2025-05-14T12:00:00", "CBY128": "2025-05-14T12:00:00", "CMM22E": "2025-05-14T12:00:00", "GXW44A": "2025-05-14T12:00:00", "ZZC02A": "2025-05-15T12:00:00", "MCA957": "2025-05-17T12:00:00", "HMR06A": "2025-05-17T12:00:00", "ORD76B": "2025-05-19T12:00:00", "NCO38D": "2025-05-19T12:00:00", "WUP22D": "2025-05-21T12:00:00", "VVW26C": "2025-05-22T12:00:00", "GVB05B": "2025-05-23T12:00:00", "ODR37B": "2025-05-23T12:00:00", "GZZ74C": "2025-05-25T12:00:00", "IVP40C": "2025-05-25T12:00:00", "GUV94B": "2025-05-26T12:00:00", "FNP07D": "2025-05-27T12:00:00", "MVY21B": "2025-05-27T12:00:00", "SLQ71D": "2025-05-27T12:00:00", "ERH20B": "2025-05-27T12:00:00", "OPT90G": "2025-05-27T12:00:00", "XVP90C": "2025-05-27T12:00:00", "LLY46D": "2025-05-30T12:00:00", "KLX94E": "2025-05-30T12:00:00", "XRN88F": "2025-06-03T12:00:00", "OOK05D": "2025-06-04T12:00:00", "PLK45G": "2025-06-04T12:00:00", "MKK98A": "2025-06-04T12:00:00", "CHZ23G": "2025-06-05T12:00:00", "MBB819": "2025-06-06T12:00:00", "KCF39A": "2025-06-06T12:00:00", "EES97H": "2025-06-07T12:00:00", "NBQ43E": "2025-06-07T12:00:00", "EUS77D": "2025-06-08T12:00:00", "OMY85B": "2025-06-10T12:00:00", "VRN72G": "2025-06-11T12:00:00", "IDE40B": "2025-06-12T12:00:00", "HLY15": "2025-06-12T12:00:00", "RIW94E": "2025-06-12T12:00:00", "VCC380": "2025-06-12T12:00:00", "LEW87B": "2025-06-13T12:00:00", "NLN16C": "2025-06-13T12:00:00", "YMO46D": "2025-06-13T12:00:00", "ZUM42A": "2025-06-13T12:00:00", "EBQ12D": "2025-06-13T12:00:00", "QHF70B": "2025-06-13T12:00:00", "AEA95D": "2025-06-13T12:00:00", "KBS50E": "2025-06-13T12:00:00", "IVB56C": "2025-06-14T12:00:00", "TLX33C": "2025-06-14T12:00:00", "OGR49B": "2025-06-16T12:00:00", "IHK51B": "2025-06-17T12:00:00", "TWL01D": "2025-06-17T12:00:00", "EPL16C": "2025-06-17T12:00:00", "KLO90E": "2025-06-17T12:00:00", "NEG87C": "2025-06-19T12:00:00", "MLQ703": "2025-06-19T12:00:00", "IID20A": "2025-06-20T12:00:00", "OGB50C": "2025-06-20T12:00:00", "SOX71B": "2025-06-20T12:00:00", "EGX24C": "2025-06-20T12:00:00", "IJD95F": "2025-06-20T12:00:00", "FEC67C": "2025-06-21T12:00:00", "FTB58E": "2025-06-23T12:00:00", "HIV24G": "2025-06-24T12:00:00", "PON53D": "2025-06-24T12:00:00", "XTY13C": "2025-06-25T12:00:00", "UDX46F": "2025-06-27T12:00:00", "LNX13F": "2025-06-27T12:00:00", "ZWX15C": "2025-06-29T12:00:00", "DDY28H": "2025-06-29T12:00:00", "PPY02F": "2025-06-30T12:00:00", "TFD54F": "2025-07-02T12:00:00", "QFA09D": "2025-07-03T12:00:00", "MCD900": "2025-07-03T12:00:00", "ELV37E": "2025-07-05T12:00:00", "DBM61C": "2025-07-11T12:00:00", "XYH07E": "2025-07-11T12:00:00", "DEJ72D": "2025-07-11T12:00:00", "HFG69B": "2025-07-13T12:00:00", "RHM92E": "2025-07-18T12:00:00", "HAA52C": "2025-07-19T12:00:00", "HRJ28A": "2025-07-21T12:00:00", "OQB04B": "2025-07-21T12:00:00", "QFH88D": "2025-08-01T12:00:00", "ULB33C": "2025-08-01T12:00:00", "PBY27C": "2025-08-04T12:00:00", "CFF427": "2025-08-10T12:00:00", "FCD786": "2025-08-11T12:00:00", "DDM79D": "2025-08-11T12:00:00", "GPI37A": "2025-08-16T12:00:00", "FOA10E": "2025-08-16T12:00:00", "CAA567": "2025-08-22T12:00:00", "ZGG27A": "2025-08-26T12:00:00", "XLD21D": "2025-08-26T12:00:00", "AME99F": "2025-08-26T12:00:00", "QRN03F": "2025-08-26T12:00:00", "JFC91G": "2025-08-26T12:00:00", "DEF14D": "2025-08-31T12:00:00", "NFG 540": "2025-09-01T12:00:00", "NCL65E": "2025-09-01T12:00:00", "EVA31F": "2025-09-02T12:00:00", "HQA08G": "2025-09-03T12:00:00", "AXF81F": "2025-09-03T12:00:00", "MYL17A": "2025-09-04T12:00:00", "RAB43E": "2025-09-05T12:00:00", "ALM29F": "2025-09-05T12:00:00", "KDM48G": "2025-09-05T12:00:00", "MLG28G": "2025-09-06T12:00:00", "CIA059": "2025-09-06T12:00:00", "GVF74B": "2025-09-07T12:00:00", "FRN006": "2025-09-08T12:00:00", "TWR10C": "2025-09-10T12:00:00", "TZO336": "2025-09-10T12:00:00", "QPD96B": "2025-09-10T12:00:00", "EUM01F": "2025-09-10T12:00:00", "RXT62G": "2025-09-11T12:00:00", "LIY82C": "2025-09-11T12:00:00", "RFK516": "2025-09-12T12:00:00", "GYX47A": "2025-09-12T12:00:00", "VDL68F": "2025-09-12T12:00:00", "DET98D": "2025-09-15T12:00:00", "KBY64E": "2025-09-16T12:00:00", "DSR45B": "2025-09-17T12:00:00", "GTM09B": "2025-09-17T12:00:00", "HDR15A": "2025-09-19T12:00:00", "TWR47D": "2025-09-22T12:00:00", "ALU25F": "2025-09-22T12:00:00", "XVW28D": "2025-09-22T12:00:00", "LAM96D": "2025-09-22T12:00:00", "TGL90G": "2025-09-22T12:00:00", "KRF59E": "2025-09-23T12:00:00", "BZM87C": "2025-09-23T12:00:00", "MVR07D": "2025-09-23T12:00:00", "WFV576": "2025-09-23T12:00:00", "ACA38E": "2025-09-23T12:00:00", "NPX46A": "2025-09-24T12:00:00", "DLT86E": "2025-09-24T12:00:00", "CMJ31E": "2025-09-24T12:00:00", "KFM266": "2025-09-24T12:00:00", "POW23C": "2025-09-25T12:00:00", "YSP30C": "2025-09-25T12:00:00", "BLN88B": "2025-09-25T12:00:00", "USN91A": "2025-09-25T12:00:00", "HAH12C": "2025-09-26T12:00:00", "SHH28B": "2025-09-26T12:00:00", "HPM17A": "2025-09-26T12:00:00", "CPG805": "2025-09-27T12:00:00", "MPT17D": "2025-09-27T12:00:00", "PJR09F": "2025-09-27T12:00:00", "DYV28C": "2025-09-28T12:00:00", "CBR769": "2025-09-29T12:00:00", "FXB72D": "2025-09-29T12:00:00", "ETL382": "2025-09-30T12:00:00", "FOO93D": "2025-10-01T12:00:00", "LKC27E": "2025-10-02T12:00:00", "SHV84F": "2025-10-02T12:00:00", "TWF72F": "2025-10-02T12:00:00", "GZF33C": "2025-10-06T12:00:00", "MKJ52B": "2025-10-06T12:00:00", "PLB34C": "2025-10-07T12:00:00", "FEO65D": "2025-10-07T12:00:00", "FQX57C": "2025-10-07T12:00:00", "QJI32E": "2025-10-08T12:00:00", "RKX52D": "2025-10-08T12:00:00", "PVD74G": "2025-10-08T12:00:00", "HIG10G": "2025-10-08T12:00:00", "KPZ02C": "2025-10-09T12:00:00", "OON23D": "2025-10-11T12:00:00", "DHU338": "2025-10-17T12:00:00", "ZVW63": "2025-10-18T12:00:00", "WVK98E": "2025-10-19T12:00:00", "ELG75E": "2025-10-20T12:00:00", "EUV20B": "2025-10-20T12:00:00", "ADC82D": "2025-10-20T12:00:00", "KDR383": "2025-10-20T12:00:00", "YIK62D": "2025-10-21T12:00:00", "GDV61E": "2025-10-21T12:00:00", "VUR38A": "2025-10-21T12:00:00", "ZOZ29E": "2025-10-22T12:00:00", "HQA17G": "2025-10-23T12:00:00", "DAU85C": "2025-10-23T12:00:00", "QKD34D": "2025-10-26T12:00:00", "QEY99D": "2025-10-26T12:00:00", "CES71A": "2025-10-26T12:00:00", "EKI42E": "2025-10-27T12:00:00", "ADA53D": "2025-10-27T12:00:00", "CFO460": "2025-10-28T12:00:00", "HQJ48B": "2025-10-28T12:00:00", "GQO88H": "2025-10-28T12:00:00", "PVY86D": "2025-10-28T12:00:00", "VCM348": "2025-10-28T12:00:00", "BEV14G": "2025-10-28T12:00:00", "IFY185": "2025-10-29T12:00:00", "ZRL077": "2025-10-29T12:00:00", "STC71": "2025-10-29T12:00:00", "CLZ686": "2025-10-30T12:00:00", "HSD95A": "2025-10-30T12:00:00", "KCC25E": "2025-11-05T12:00:00", "NIZ98D": "2025-11-06T12:00:00", "MKN90A": "2025-11-06T12:00:00", "ZBT81C": "2025-11-08T12:00:00", "DBK13C": "2025-11-08T12:00:00", "GQM34E": "2025-11-09T12:00:00", "EVA30F": "2025-11-10T12:00:00", "CAK575": "2025-11-11T12:00:00", "XSV88C": "2025-11-12T12:00:00", "UGL24E": "2025-11-13T12:00:00", "HFC54B": "2025-11-15T12:00:00", "CHF202": "2025-11-15T12:00:00", "PLL72C": "2025-11-15T12:00:00", "JXB83B": "2025-11-01T12:00:00", "EFO08G": "2025-11-18T12:00:00", "UVV41C": "2025-11-18T12:00:00", "UXB86E": "2025-11-18T12:00:00", "WGU59C": "2025-11-18T12:00:00", "HMK91A": "2025-11-20T12:00:00", "MGV83B": "2025-11-21T12:00:00", "YJY15F": "2025-11-21T12:00:00", "TDI59E": "2025-11-25T12:00:00", "CKH158": "2025-11-26T12:00:00", "TRV11A": "2025-11-28T12:00:00", "UFX550": "2025-11-30T12:00:00", "QKO63A": "2025-11-30T12:00:00", "BPV52C": "2025-12-01T12:00:00", "LKE74F": "2025-12-09T12:00:00", "DBB56A": "2025-12-09T12:00:00", "WVU93D": "2025-12-09T12:00:00", "YPT34": "2025-12-09T12:00:00", "DXP593": "2025-12-15T12:00:00", "VET86A": "2025-12-16T12:00:00", "RKU12": "2025-12-16T12:00:00", "WRZ29G": "2025-12-17T12:00:00", "WFY47C": "2025-12-19T12:00:00", "FQM32A": "2025-12-22T12:00:00", "ROA165": "2025-12-29T12:00:00", "BWL775": "2025-12-29T12:00:00", "WVH35D": "2025-12-30T12:00:00", "UGB39E": "2025-12-30T12:00:00", "BLH91D": "2026-01-02T12:00:00", "GHC80A": "2026-01-05T12:00:00", "RCR23D": "2026-01-06T12:00:00", "UWE54E": "2026-01-06T12:00:00", "OKE11D": "2026-01-14T12:00:00", "VFB79E": "2026-01-17T12:00:00", "QAY67A": "2026-01-23T12:00:00", "LQM384": "2026-01-28T12:00:00", "HUW76A": "2026-01-29T12:00:00", "CEQ01A": "2026-02-02T12:00:00", "XNQ05E": "2026-02-05T12:00:00", "GYC23A": "2026-02-05T12:00:00", "CBY625": "2026-02-05T12:00:00", "HXI77E": "2026-02-06T12:00:00", "JGT304": "2026-02-06T12:00:00", "CKE163": "2026-02-06T12:00:00", "WCN05F": "2026-02-09T12:00:00", "FTZ16A": "2026-02-10T12:00:00", "PBS91C": "2026-02-10T12:00:00", "DEU04C": "2026-02-11T12:00:00", "AVY14B": "2026-02-12T12:00:00", "KRX70F": "2026-02-13T12:00:00", "OFT64C": "2026-02-17T12:00:00", "JLR56B": "2026-02-17T12:00:00", "HEO115": "2026-02-17T12:00:00", "ZWO36A": "2026-02-17T12:00:00", "TGU95G": "2026-02-17T12:00:00", "KBZ87E": "2026-02-17T12:00:00", "HN31A": "2026-02-18T12:00:00", "QMX65A": "2026-02-18T12:00:00", "MAT25C": "2026-02-18T12:00:00", "OGQ31C": "2026-02-20T12:00:00", "KOA35B": "2026-02-20T12:00:00", "THZ70G": "2026-02-20T12:00:00", "VCF84A": "2026-02-23T12:00:00", "NXT47E": "2026-02-23T12:00:00", "IHB84B": "2026-02-23T12:00:00", "NAK92C": "2026-02-24T12:00:00", "ROG64C": "2026-02-24T12:00:00", "BCT230": "2026-02-25T12:00:00", "JJE65B": "2026-02-25T12:00:00", "WFT16C": "2026-02-25T12:00:00", "WHE43C": "2026-02-26T12:00:00", "GRG56D": "2026-02-26T12:00:00", "WXD06D": "2026-02-27T12:00:00", "KMA10C": "2026-02-27T12:00:00", "HDO12A": "2026-03-02T12:00:00", "PIR62B": "2026-03-03T12:00:00", "KQI59B": "2026-03-03T12:00:00", "HDF61": "2026-03-04T12:00:00", "EHV115": "2026-03-04T12:00:00", "BCA01B": "2026-03-06T12:00:00", "HRB51A": "2026-03-06T12:00:00", "HSW76A": "2026-03-09T12:00:00", "XNE15E": "2026-03-10T12:00:00", "VCE080": "2026-03-10T12:00:00", "FOI34D": "2026-03-11T12:00:00", "HTG27A": "2026-03-12T12:00:00", "KUJ43B": "2026-03-12T12:00:00", "NTO18B": "2026-03-12T12:00:00", "SFA11C": "2026-03-12T12:00:00", "LII97E": "2026-03-12T12:00:00", "XJR57E": "2026-03-13T12:00:00", "HNY30F": "2026-03-13T12:00:00", "DVR02C": "2026-03-13T12:00:00", "AEK47D": "2026-03-14T12:00:00", "EQW34D": "2026-03-14T12:00:00", "TAW47E": "2026-03-14T12:00:00", "CIO23E": "2026-03-15T12:00:00", "MGR70A": "2026-03-15T12:00:00", "HSU08A": "2026-03-15T12:00:00", "PXT93F": "2026-03-16T12:00:00", "FHC52B": "2026-03-16T12:00:00", "HUZ58D": "2026-03-16T12:00:00", "HSL92A": "2026-03-16T12:00:00", "RHV39E": "2026-03-17T12:00:00", "TGC24G": "2026-03-17T12:00:00", "VKI670": "2026-03-17T12:00:00", "CWF49C": "2026-03-18T12:00:00", "GPT12C": "2026-03-18T12:00:00", "HFR80D": "2026-03-18T12:00:00", "OKG68D": "2026-03-19T12:00:00", "HJA56G": "2026-03-19T12:00:00", "LIW34H": "2026-03-19T12:00:00", "YYE79C": "2026-03-19T12:00:00", "YMH03E": "2026-03-19T12:00:00", "WIW56C": "2026-03-19T12:00:00", "BKC70D": "2026-03-20T12:00:00", "CLG09G": "2026-03-23T12:00:00", "COP71B": "2026-03-30T12:00:00", "NPK68D": "2026-03-30T12:00:00", "XSL15A": "2026-03-31T12:00:00", "CDP02A": "2026-03-31T12:00:00", "NBI83F": "2026-03-31T12:00:00", "WEA58D": "2026-04-01T12:00:00", "VDP40F": "2026-04-01T12:00:00", "UFJ60G": "2026-04-02T12:00:00", "EUJ34B": "2026-04-06T12:00:00", "SNE77": "2026-04-06T12:00:00", "VCU935": "2026-04-07T12:00:00", "OOK149": "2026-04-07T12:00:00", "TVQ81C": "2026-04-08T12:00:00", "HNO60A": "2026-04-09T12:00:00", "FXW08D": "2026-04-09T12:00:00", "WFE14A": "2026-04-09T12:00:00", "HPK12G": "2026-04-09T12:00:00", "PTJ51G": "2026-04-10T12:00:00", "IKD14A": "2026-04-11T12:00:00", "NNG74B": "2026-04-14T12:00:00", "GVE60B": "2026-04-14T12:00:00", "FHC02B": "2026-04-14T12:00:00", "VRO79G": "2026-04-15T12:00:00", "CLT344": "2026-04-18T12:00:00", "TCI18E": "2026-04-21T12:00:00", "QFN13D": "2026-04-22T12:00:00", "XSI83F": "2026-04-22T12:00:00", "ISZ41C": "2026-04-27T12:00:00", "IBP893": "2026-04-27T12:00:00", "LXE21D": "2026-05-08T12:00:00", "CZI356": "2026-05-16T12:00:00", "GIX95B": "2026-05-16T12:00:00", "KZN69D": "2026-05-16T12:00:00", "HEP046": "2026-05-18T12:00:00", "EOL66C": "2026-05-19T12:00:00", "DGN16C": "2026-05-19T12:00:00", "JEZ59B": "2026-05-22T12:00:00", "FOF16D": "2026-05-25T12:00:00", "OCX24B": "2026-05-25T12:00:00", "CLR127": "2026-05-26T12:00:00", "EZY17B": "2026-06-07T12:00:00", "VWD22C": "2026-06-09T12:00:00", "VBS620": "2026-06-10T12:00:00", "NCT49D": "2026-06-10T12:00:00", "DVD91E": "2026-06-10T12:00:00", "YKQ68F": "2026-06-10T12:00:00", "VWD84C": "2026-06-11T12:00:00", "ANN32C": "2026-06-11T12:00:00", "VMY38C": "2026-06-11T12:00:00", "FAV08B": "2026-06-11T12:00:00", "VWC87C": "2026-06-11T12:00:00", "FDW29B": "2026-06-11T12:00:00", "PMT63C": "2026-06-12T12:00:00", "ZKY69A": "2026-06-15T12:00:00", "FYQ54D": "2026-06-20T12:00:00", "ADT09D": "2026-07-03T12:00:00", "VSB08C": "2026-07-03T12:00:00", "APV94C": "2026-07-06T12:00:00", "DQQ90A": "2026-07-09T12:00:00", "OFX60C": "2026-07-09T12:00:00", "JOQ13B": "2026-07-09T12:00:00", "TEX35D": "2026-07-10T12:00:00", "TUY22C": "2026-07-11T12:00:00", "MYW58C": "2026-07-11T12:00:00", "HPV76A": "2026-07-11T12:00:00", "TEE86D": "2026-07-13T12:00:00", "BFX58G": "2026-07-13T12:00:00", "D69": "2026-07-13T12:00:00", "GYQ38A": "2026-07-14T12:00:00", "AVH67D": "2026-07-15T12:00:00", "HAF28C": "2026-07-15T12:00:00", "XAB24C": "2026-07-16T12:00:00", "DZD40C": "2026-07-17T12:00:00", "ZFH36F": "2026-07-28T12:00:00", "AWG53G": "2026-07-28T12:00:00", "CAA88A": "2026-07-28T12:00:00", "AZA42": "2026-07-29T12:00:00", "SOV33B": "2026-07-29T12:00:00", "QGD63D": "2026-07-29T12:00:00", "GYP286": "2026-08-04T12:00:00", "EHZ258": "2026-08-04T12:00:00", "MBX676": "2026-08-04T12:00:00", "EDU13C": "2026-08-04T12:00:00", "ZER01C": "2026-08-04T12:00:00", "CPN59H": "2026-08-04T12:00:00", "PLO18C": "2026-08-04T12:00:00", "AUV867": "2026-08-05T12:00:00", "KFC702": "2026-08-05T12:00:00", "RBN90E": "2026-08-05T12:00:00", "BWA581": "2026-08-05T12:00:00", "YSY65G": "2026-08-05T12:00:00", "EPE21C": "2026-08-05T12:00:00", "GJT36F": "2026-08-05T12:00:00", "IIQ163": "2026-08-06T12:00:00", "PLP444": "2026-08-06T12:00:00", "HUK87A": "2026-08-06T12:00:00", "SFC88D": "2026-08-06T12:00:00", "ZGB56F": "2026-08-06T12:00:00", "HVA37D": "2026-08-06T12:00:00", "SXD04": "2026-08-06T12:00:00", "JSI84H": "2026-08-06T12:00:00", "RJS44B": "2026-08-06T12:00:00", "DSB66H": "2026-08-06T12:00:00", "JFW941": "2026-08-07T12:00:00", "CEW413": "2025-01-01T12:00:00", "MXY094": "2025-01-03T12:00:00", "COL203": "2025-01-10T12:00:00", "JUM143": "2025-01-12T12:00:00", "ZEE81D": "2025-01-15T12:00:00", "XBS94E": "2025-01-23T12:00:00", "NOQ20F": "2025-01-23T12:00:00", "ESY620": "2025-01-24T12:00:00", "TJX553": "2025-01-27T12:00:00", "LST181": "2025-01-31T12:00:00", "NZS447": "2025-02-01T12:00:00", "DUE696": "2025-02-01T12:00:00", "FWR590": "2025-02-01T12:00:00", "LUE963": "2025-02-02T12:00:00", "BPD757": "2025-02-02T12:00:00", "IIQ346": "2025-02-07T12:00:00", "MIL70477": "2025-02-07T12:00:00", "COL542": "2025-02-09T12:00:00", "LQM717": "2025-02-14T12:00:00", "CLY99G": "2025-02-14T12:00:00", "MKA91G": "2025-02-14T12:00:00", "CFS672": "2025-02-18T12:00:00", "ADJ07E": "2025-02-24T12:00:00", "IBC53D": "2025-02-24T12:00:00", "LPZ912": "2025-03-08T12:00:00", "798NBO": "2025-03-08T12:00:00", "QLD69D": "2025-03-10T12:00:00", "KRN52B": "2025-03-11T12:00:00", "QNG88A": "2025-03-11T12:00:00", "GLJ11H": "2025-03-15T12:00:00", "RHP314": "2025-03-15T12:00:00", "COH888": "2025-03-15T12:00:00", "DBC617": "2025-03-15T12:00:00", "SXK508": "2025-03-18T12:00:00", "IWL91C": "2025-03-19T12:00:00", "HOL64H": "2025-03-20T12:00:00", "XBN61F": "2025-03-20T12:00:00", "KBN67H": "2025-03-24T12:00:00", "CLU398": "2025-03-25T12:00:00", "TPX669": "2025-03-27T12:00:00", "VMT652": "2025-03-31T12:00:00", "GLW90D": "2025-04-04T12:00:00", "FQT819": "2025-04-05T12:00:00", "IPY65H": "2025-04-05T12:00:00", "GJS469": "2025-04-07T12:00:00", "FRF25A": "2025-04-11T12:00:00", "TJV937": "2025-04-13T12:00:00", "WDF46F": "2025-04-13T12:00:00", "NML988": "2025-04-16T12:00:00", "LQV621": "2025-04-18T12:00:00", "LGA42E": "2025-04-18T12:00:00", "FQD48F": "2025-04-19T12:00:00", "NXB30F": "2025-05-03T12:00:00", "OGO26E": "2025-05-05T12:00:00", "QKL19D": "2025-05-07T12:00:00", "DTG03A": "2025-05-10T12:00:00", "HEV46A": "2025-05-11T12:00:00", "FVI16": "2025-05-12T12:00:00", "PWN56D": "2025-05-20T12:00:00", "XVJ26C": "2025-05-22T12:00:00", "TWO42F": "2025-05-23T12:00:00", "JKF19B": "2025-05-27T12:00:00", "KQZ27F": "2025-05-31T12:00:00", "FNY86D": "2025-05-31T12:00:00", "AXC96F": "2025-06-02T12:00:00", "UWE36E": "2025-06-03T12:00:00", "MXV34D": "2025-06-07T12:00:00", "UQO09D": "2025-06-07T12:00:00", "GKA299": "2025-06-08T12:00:00", "OGS39C": "2025-06-10T12:00:00", "YAQ214": "2025-06-17T12:00:00", "NME627": "2025-06-19T12:00:00", "SHL04B": "2025-06-25T12:00:00", "AEH78D": "2025-06-28T12:00:00", "TEV83D": "2025-07-06T12:00:00", "ZNN762": "2025-07-16T12:00:00", "HAB59C": "2025-07-23T12:00:00", "JXA53B": "2025-07-24T12:00:00", "OOE95G": "2025-07-26T12:00:00", "GMQ75B": "2025-07-27T12:00:00", "FOQ79A": "2025-07-28T12:00:00", "HSC250": "2025-07-29T12:00:00", "EXE32C": "2025-08-03T12:00:00", "TEW92F": "2025-08-20T12:00:00", "MJV39B": "2025-08-26T12:00:00", "JOY810": "2025-08-26T12:00:00", "JFT479": "2025-08-27T12:00:00", "EXC54C": "2025-09-08T12:00:00", "WHW677": "2025-09-09T12:00:00", "YSO96G": "2025-09-16T12:00:00", "LBW18C": "2025-08-31T12:00:00", "GUN464": "2025-09-22T12:00:00", "RTH22E": "2025-09-22T12:00:00", "CNU49H": "2025-09-27T12:00:00", "CBX01A": "2025-10-01T12:00:00", "SHE47B": "2025-10-05T12:00:00", "ICB75A": "2025-10-11T12:00:00", "OHD24E": "2025-10-15T12:00:00", "NVB85": "2025-10-23T12:00:00", "QUX39C": "2025-10-27T12:00:00", "OFG62C": "2025-10-28T12:00:00", "MOK64A": "2025-11-05T12:00:00", "ZET89C": "2025-11-09T12:00:00", "KWS15B": "2025-11-13T12:00:00", "ETR26E": "2025-11-21T12:00:00", "KRB19F": "2025-11-21T12:00:00", "HHX93B": "2025-11-25T12:00:00", "RIL95B": "2025-11-30T12:00:00", "GSX83B": "2025-11-30T12:00:00", "NDV40E": "2025-12-07T12:00:00", "LKI20E": "2025-12-07T12:00:00", "KNV01G": "2025-12-08T12:00:00", "KPK41B": "2025-12-10T12:00:00", "YAQ018": "2025-12-10T12:00:00", "ESZ213": "2025-12-21T12:00:00", "AQI17A": "2026-01-10T12:00:00", "IQE13H": "2026-01-13T12:00:00", "ARP291": "2026-01-20T12:00:00", "UZV30D": "2026-01-23T12:00:00", "GEQ47E": "2026-02-04T12:00:00", "VMT702": "2026-02-06T12:00:00", "YWF69G": "2026-02-12T12:00:00", "NBX88H": "2026-02-15T12:00:00", "DRD50C": "2026-02-19T12:00:00", "ESZ429": "2026-02-20T12:00:00", "JOD75E": "2026-02-20T12:00:00", "AKG91F": "2026-02-20T12:00:00", "RII33B": "2026-02-22T12:00:00", "LEZ42": "2026-02-22T12:00:00", "FJR26C": "2026-02-23T12:00:00", "NBZ14F": "2026-03-07T12:00:00", "CXT02I": "2026-03-16T12:00:00", "SCV37H": "2026-03-23T12:00:00", "MBZ11E": "2026-04-06T12:00:00", "IGK59D": "2026-04-09T12:00:00", "WVL39E": "2026-04-11T12:00:00", "FWP235": "2026-04-12T12:00:00", "WXH49D": "2026-04-12T12:00:00", "XMH03H": "2026-04-15T12:00:00", "KLN54C": "2026-04-18T12:00:00", "UPF06C": "2026-04-26T12:00:00", "VPD822": "2026-05-02T12:00:00", "TYM97F": "2026-05-05T12:00:00", "ZJA50D": "2026-05-08T12:00:00", "HSO20D": "2026-05-08T12:00:00", "HRZ55D": "2026-05-09T12:00:00", "SSS13C": "2026-05-13T12:00:00", "WCA25F": "2026-05-14T12:00:00", "KDL24G": "2026-05-15T12:00:00", "NHU028": "2026-05-17T12:00:00", "CEE358": "2026-05-19T12:00:00", "JPK871": "2026-05-19T12:00:00", "HSM36D": "2026-05-19T12:00:00", "JFY69E": "2026-05-22T12:00:00", "FQX90F": "2026-05-23T12:00:00", "CIQ06G": "2026-05-23T12:00:00", "WRD286": "2026-05-30T12:00:00", "WGD53C": "2026-05-30T12:00:00", "UCN97F": "2026-06-06T12:00:00", "MIP737": "2026-06-06T12:00:00", "VMU990": "2026-06-17T12:00:00", "ZCY39E": "2026-06-17T12:00:00", "HPW925": "2026-06-19T12:00:00", "KIB628": "2026-06-23T12:00:00", "COK901": "2026-06-23T12:00:00", "ZZN23": "2026-06-24T12:00:00", "SON59C": "2026-06-27T12:00:00", "ERR25I": "2026-06-28T12:00:00", "GYY035": "2026-06-28T12:00:00", "HMP06F": "2026-07-03T12:00:00", "496AEY": "2026-07-05T12:00:00", "BYK90F": "2026-07-06T12:00:00", "VCB456": "2026-07-06T12:00:00", "BJL985": "2026-07-08T12:00:00", "DPE04H": "2026-07-14T12:00:00", "DMS883": "2026-07-14T12:00:00", "HJE01G": "2026-07-15T12:00:00", "TJX275": "2026-07-15T12:00:00", "UGS264": "2026-07-17T12:00:00", "UBT749": "2026-07-17T12:00:00", "SSK87H": "2026-07-24T12:00:00", "KIR666": "2026-07-26T12:00:00", "HYL268": "2026-07-26T12:00:00", "JYR990": "2026-07-26T12:00:00", "WZY965": "2026-07-27T12:00:00", "YKI59F": "2026-07-27T12:00:00", "EUZ48F": "2026-07-28T12:00:00", "WCY61F": "2026-07-29T12:00:00", "PSC09G": "2026-07-29T12:00:00", "YWF52G": "2026-08-01T12:00:00", "JTU99H": "2026-08-07T12:00:00", "BSQ69H": "2026-08-07T12:00:00", "VKF49H": "2026-08-07T12:00:00", "DTH15I": "2026-08-07T12:00:00", "KRF81F": "2026-08-07T12:00:00", "XTH53F": "2026-08-07T12:00:00"};
 async function corregirFechasImportacion(){
