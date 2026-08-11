@@ -119,9 +119,9 @@
   <button class="tab-btn active" data-tab="dashboard">Panel</button>
   <button class="tab-btn" data-tab="grua">Recepción grúa</button>
   <button class="tab-btn" data-tab="patio">Recepción en patio</button>
-  <button class="tab-btn" data-tab="inventario">Inventario / Administrativo</button>
   <button class="tab-btn" data-tab="inventarios">Inventarios</button>
   <button class="tab-btn" data-tab="salida">Salida</button>
+  <button class="tab-btn" data-tab="salida-transito">Salida de Tránsito</button>
   <button class="tab-btn" data-tab="liquidaciones">Liquidaciones</button>
   <button class="tab-btn" data-tab="informes">Informes</button>
   <button class="tab-btn" data-tab="operadores">Usuarios</button>
@@ -217,24 +217,6 @@
     </div>
   </div>
 
-  <!-- INVENTARIO / ADMINISTRATIVO -->
-  <div class="panel" id="panel-inventario">
-    <div class="card">
-      <div class="flex-between" style="margin-bottom:6px;">
-        <h3 style="margin:0;">Inventario general de vehículos</h3>
-        <input type="text" id="inv-buscar" placeholder="Buscar por placa..." style="max-width:200px; margin:0;">
-      </div>
-      <p class="subtle" style="margin-top:0;">Todos los vehículos ingresados, su estado y lo que llevan acumulado.</p>
-      <div style="overflow-x:auto;">
-        <table>
-          <thead><tr><th>N.° Inv.</th><th>Placa</th><th>Tipo</th><th>Marca/Color</th><th>Motivo</th><th>Estado</th><th>Recibió en grúa</th><th>Recibió en patio</th><th>Días</th><th>Parqueo</th><th>Grúa</th><th>Total</th><th>Orden salida</th><th></th></tr></thead>
-          <tbody id="tabla-inventario"></tbody>
-        </table>
-        <div id="inventario-vacio" class="empty" style="display:none;"><div class="big">🧾</div>Aún no hay vehículos registrados</div>
-      </div>
-    </div>
-  </div>
-
   <!-- INVENTARIOS (búsqueda puntual por placa) -->
   <div class="panel" id="panel-inventarios">
     <div class="card" style="margin-bottom:20px;">
@@ -256,6 +238,19 @@
         <button class="btn" id="s-btn-buscar">Buscar</button>
       </div>
       <div id="s-resultado"></div>
+    </div>
+  </div>
+
+  <!-- SALIDA DE TRÁNSITO (solo consulta, sin poder dar salida) -->
+  <div class="panel" id="panel-salida-transito">
+    <div class="card" style="margin-bottom:20px;">
+      <h3>Consultar vehículo</h3>
+      <p class="subtle" style="margin-top:0;">Este módulo es solo de consulta — no se puede confirmar ninguna salida desde aquí.</p>
+      <div class="buscador-placa">
+        <input type="text" id="st-buscar-placa" placeholder="Escribe la placa...">
+        <button class="btn" id="st-btn-buscar">Buscar</button>
+      </div>
+      <div id="st-resultado"></div>
     </div>
   </div>
 
@@ -318,14 +313,34 @@
     </div>
 
     <div class="card">
-      <h3 style="margin:0 0 6px 0;">Informe 3 — Para operadores de grúa (mensual, corte el 30 o 31)</h3>
-      <p class="subtle" style="margin-top:0;">Total de vehículos que salieron en el mes completo y el valor neto que le corresponde a cada operador según su porcentaje.</p>
+      <h3 style="margin:0 0 6px 0;">Informe 3 — Para operadores de grúa</h3>
+      <p class="subtle" style="margin-top:0;">Elige si quieres el reporte de una semana puntual (corte viernes 5:01 p.m. a viernes 5:00 p.m.) o el mes completo. Muestra lo que ingresó, lo que salió y lo que se debe pagar.</p>
       <div class="grid grid-2" style="margin-bottom:12px;">
         <div><label>Año</label><select id="ter-anio"></select></div>
         <div><label>Mes</label><select id="ter-mes"></select></div>
       </div>
-      <div class="grid grid-2" style="margin-bottom:14px;">
-        <div class="kpi a-naranja"><div class="num mono" id="ter-salidas">0</div><div class="lbl">Vehículos salidos en el mes</div></div>
+      <label>Periodo</label>
+      <select id="ter-periodo">
+        <option value="mes">Mes completo</option>
+        <option value="semana">Semana puntual (corte viernes 5:00 p.m.)</option>
+      </select>
+      <div id="ter-semana-wrap" style="display:none;">
+        <label>¿Cuál semana del mes?</label>
+        <select id="ter-semana">
+          <option value="1">Semana 1</option>
+          <option value="2">Semana 2</option>
+          <option value="3">Semana 3</option>
+          <option value="4">Semana 4</option>
+        </select>
+      </div>
+      <label>¿De qué empresa quieres el reporte?</label>
+      <select id="ter-empresa">
+        <option value="todas">Ambas empresas juntas</option>
+      </select>
+      <div id="ter-rango" class="subtle" style="margin:8px 0 12px 0;"></div>
+      <div class="grid grid-3" style="margin-bottom:14px;">
+        <div class="kpi a-azul"><div class="num mono" id="ter-ingresos">0</div><div class="lbl">Vehículos ingresados</div></div>
+        <div class="kpi a-naranja"><div class="num mono" id="ter-salidas">0</div><div class="lbl">Vehículos con salida</div></div>
         <div class="kpi a-amarillo"><div class="num mono" id="ter-total">$0</div><div class="lbl">Total neto a pagar</div></div>
       </div>
       <button class="btn" id="btn-pdf-terceros" style="width:100%;">Descargar informe de operadores (PDF)</button>
@@ -380,12 +395,8 @@
             <option value="comparendo">Comparendo</option>
             <option value="accidente">Accidente</option>
           </select>
-          <label>Operador de grúa al que se le asignan</label>
+          <label>Empresa operadora a la que se le asignan</label>
           <select id="imp-operador"></select>
-          <div id="imp-operador-nuevo-wrap">
-            <label>O crear un operador nuevo con este nombre</label>
-            <input type="text" id="imp-operador-nuevo" placeholder="Ej: Gómez Nieto">
-          </div>
           <div id="imp-preview" class="subtle" style="margin:6px 0 14px 0;"></div>
           <button type="button" class="btn" id="imp-btn-importar" style="width:100%;">Importar vehículos</button>
         </div>
@@ -400,8 +411,9 @@
           <div style="min-width:170px;"><label>Rol</label>
             <select id="au-rol" style="margin-bottom:0;">
               <option value="grua">Operador de grúa</option>
-              <option value="vigilante">Vigilante de parqueadero (patio)</option>
+              <option value="vigilante">Encargado de patio</option>
               <option value="secretaria">Secretaría (salidas)</option>
+              <option value="transito">Secretaría de Tránsito (consulta)</option>
               <option value="administrador">Administrador</option>
               <option value="admin">Administrador general</option>
             </select>
@@ -521,7 +533,7 @@
       <label>Nombre completo</label>
       <input type="text" id="reg-nombre" placeholder="Tu nombre completo">
       <label>Usuario</label>
-      <input type="text" id="reg-usuario" placeholder="Elige un usuario" autocomplete="username">
+      <input type="text" id="reg-usuario" placeholder="Elige un usuario (sin @, sin correo)" autocomplete="off" autocapitalize="none">
       <label>Contraseña</label>
       <input type="password" id="reg-password" placeholder="Elige una contraseña" autocomplete="new-password">
       <label>Cédula (solo si vas a ser operador de grúa)</label>
@@ -717,6 +729,10 @@ document.getElementById("btn-crear-cuenta").addEventListener("click", async ()=>
   const cedula = document.getElementById("reg-cedula").value.trim();
   const placaGrua = document.getElementById("reg-placa-grua").value.trim().toUpperCase();
   if(!nombre || !usuario || !password){ mostrarLoginMsg("Completa todos los campos.", "var(--rojo)"); return; }
+  if(usuario.includes("@") || usuario.toLowerCase().includes(".com") || usuario.toLowerCase().includes(".co")){
+    mostrarLoginMsg("En \"Usuario\" no pongas tu correo — escribe solo un nombre corto, ej: julian, alejandra.grua", "var(--rojo)");
+    return;
+  }
   if(password.length < 6){ mostrarLoginMsg("La contraseña debe tener al menos 6 caracteres.", "var(--rojo)"); return; }
   registroEnCurso = true;
   try{
@@ -803,7 +819,9 @@ function operadorDe(id){ return empresaDe(id) || db.usuarios.find(u=>u.id===id);
 function nombreConductor(v){
   const empresa = operadorDe(v.operadorId);
   if(v.conductorNombre) return `${v.conductorNombre}${empresa ? " ("+empresa.nombre+")" : ""}`;
-  return empresa ? empresa.nombre : "—";
+  if(empresa) return empresa.nombre;
+  if(v.traidoPor) return `Traído por: ${v.traidoPor}`;
+  return "—";
 }
 function gruaUnidadDe(id){ return db.gruas.find(g=>g.id===id); }
 function hoyStr(){ return new Date().toDateString(); }
@@ -847,11 +865,12 @@ setInterval(()=>{ document.getElementById("reloj").textContent = new Date().toLo
 
 /* ---------- Permisos por rol ---------- */
 const TABS_POR_ROL = {
-  admin:          ["dashboard","grua","patio","inventario","inventarios","salida","liquidaciones","informes","operadores","tarifas","pagos","balances"],
-  administrador:  ["dashboard","grua","patio","inventario","inventarios","salida","liquidaciones","informes","operadores","tarifas","pagos"],
+  admin:          ["dashboard","grua","patio","inventarios","salida","salida-transito","liquidaciones","informes","operadores","tarifas","pagos","balances"],
+  administrador:  ["dashboard","grua","patio","inventarios","salida","liquidaciones","informes","operadores","tarifas","pagos"],
   grua:           ["grua"],
   vigilante:      ["patio","inventarios","grua"],
-  secretaria:     ["salida","inventario","inventarios"],
+  secretaria:     ["salida","inventarios"],
+  transito:       ["salida-transito"],
 };
 function tabsPermitidas(){
   if(!sesion) return Object.keys(TABS_POR_ROL.admin); // login modal bloquea igual, no importa cuáles se vean detrás
@@ -1001,10 +1020,100 @@ document.getElementById("p-buscar-placa").addEventListener("keydown", e=>{ if(e.
 
 function buscarParaPatio(){
   const placa = document.getElementById("p-buscar-placa").value.trim().toUpperCase();
+  if(!placa){ toast("Escribe una placa"); return; }
   const cont = document.getElementById("p-resultado");
   const v = db.vehiculos.find(x=>x.placa===placa && x.estado==="transito");
-  if(!v){ cont.innerHTML = `<div class="empty subtle">No hay ningún vehículo "en camino" con esa placa.</div>`; return; }
-  mostrarFormularioPatio(v);
+  if(v){ mostrarFormularioPatio(v); return; }
+  if(db.vehiculos.some(x=>x.placa===placa && x.estado!=="salido")){
+    cont.innerHTML = `<div class="empty subtle">Ya hay un vehículo activo con esa placa (no está "en camino"). Búscalo en Inventarios.</div>`;
+    return;
+  }
+  mostrarFormularioIngresoDirecto(placa);
+}
+function mostrarFormularioIngresoDirecto(placa){
+  patioVehId = null;
+  fotosPatioTemp = [];
+  const cont = document.getElementById("p-resultado");
+  cont.innerHTML = `
+    <div class="card" style="border-color:var(--naranja); padding:16px;">
+      <h3 style="margin:0 0 4px 0;">Ingreso directo al patio</h3>
+      <p class="subtle" style="margin-top:0;">No hay ningún vehículo "en camino" con la placa <b>${placa}</b>. Regístralo directamente si acaba de llegar sin pasar por el módulo de grúa.</p>
+      <label>Placa</label>
+      <input type="text" id="pd-placa" value="${placa}" style="text-transform:uppercase;">
+      <label>Tipo de vehículo</label>
+      <select id="pd-tipo"></select>
+      <label>Marca</label>
+      <input type="text" id="pd-marca" placeholder="Ej: Chevrolet, Honda...">
+      <label>Color</label>
+      <input type="text" id="pd-color" placeholder="Ej: Negro, Rojo...">
+      <label>Motivo de inmovilización</label>
+      <select id="pd-motivo">
+        <option value="comparendo">Comparendo</option>
+        <option value="accidente">Accidente</option>
+      </select>
+      <label>¿Quién lo trae?</label>
+      <select id="pd-traidopor">
+        <option value="policia">Policía</option>
+        <option value="otro">Otro</option>
+      </select>
+      <div id="pd-traidopor-otro-wrap" style="display:none;">
+        <label>Especifica quién lo trae</label>
+        <input type="text" id="pd-traidopor-otro" placeholder="Ej: Nombre del particular, grúa externa, etc.">
+      </div>
+      <label>Observaciones / daños al recibirlo</label>
+      <input type="text" id="pd-obs" placeholder="Estado en que llega...">
+      <label>Fotos</label>
+      <input type="file" id="pd-fotos" accept="image/*" multiple>
+      <div class="fotos-preview" id="pd-fotos-preview"></div>
+      <button class="btn" id="pd-btn-confirmar" style="width:100%; margin-top:10px;" ${sesion?"":"disabled"}>Registrar ingreso directo al parqueadero</button>
+    </div>
+  `;
+  poblarTipos(document.getElementById("pd-tipo"));
+  document.getElementById("pd-traidopor").addEventListener("change", e=>{
+    document.getElementById("pd-traidopor-otro-wrap").style.display = e.target.value==="otro" ? "block" : "none";
+  });
+  document.getElementById("pd-fotos").addEventListener("change", async e=>{
+    for(const f of Array.from(e.target.files)){ try{ fotosPatioTemp.push(await comprimirImagen(f)); }catch(err){} }
+    renderFotosPreview("pd-fotos-preview", fotosPatioTemp, "quitarFotoPatio");
+    e.target.value = "";
+  });
+  document.getElementById("pd-btn-confirmar").addEventListener("click", confirmarIngresoDirecto);
+}
+function confirmarIngresoDirecto(){
+  if(!sesion){ toast("Inicia sesión primero"); return; }
+  const placa = document.getElementById("pd-placa").value.trim().toUpperCase();
+  if(!placa){ toast("Ingresa la placa"); return; }
+  if(db.vehiculos.some(v=>v.placa===placa && v.estado!=="salido")){ toast("Ya existe un vehículo activo con esa placa"); return; }
+  const traidoPorSel = document.getElementById("pd-traidopor").value;
+  const traidoPorTxt = traidoPorSel==="policia" ? "Policía" : (document.getElementById("pd-traidopor-otro").value.trim() || "Otro");
+  const ahora = new Date().toISOString();
+  const veh = {
+    id: uid(), placa,
+    numeroInventario: db.consecutivoInventario,
+    tipoId: document.getElementById("pd-tipo").value,
+    marca: document.getElementById("pd-marca").value.trim(),
+    color: document.getElementById("pd-color").value.trim(),
+    motivo: document.getElementById("pd-motivo").value,
+    operadorId: null, conductorNombre: null, gruaUnidadId: null,
+    traidoPor: traidoPorTxt,
+    gruaDanos: "", gruaFotos: [],
+    gruaFecha: ahora,
+    estado: "patio",
+    patioVigilante: sesion.nombre,
+    patioObs: document.getElementById("pd-obs").value.trim(),
+    patioFotos: fotosPatioTemp.slice(),
+    patioFecha: ahora,
+    salidaFecha: null, ordenSalida: null, liquidado: false,
+  };
+  db.vehiculos.push(veh);
+  db.consecutivoInventario++;
+  guardarVehiculo(veh);
+  guardarContadores();
+  toast(`${veh.placa} registrado directamente en el patio — inicia el cobro diario`);
+  document.getElementById("p-resultado").innerHTML = "";
+  document.getElementById("p-buscar-placa").value = "";
+  fotosPatioTemp = [];
+  renderAll();
 }
 function mostrarFormularioPatio(v){
   patioVehId = v.id;
@@ -1263,39 +1372,41 @@ function buscarInventarioPuntual(){
     <div class="split-box"><div class="flex-between"><span class="lbl">Grúa</span><span class="val mono">${fmt(c.valorGrua)}</span></div></div>
     <div class="split-box" style="border-color:var(--amarillo);"><div class="flex-between"><span class="lbl">TOTAL</span><span class="val mono" style="color:var(--amarillo); font-size:22px;">${fmt(c.total)}</span></div></div>
     <button class="btn" style="width:100%; margin-top:12px;" onclick="generarInventarioPDF('${v.id}')">Descargar inventario en PDF</button>
+    ${sesion && (sesion.rol==="admin" || sesion.rol==="administrador") ? `
+    <div class="card" style="margin-top:16px; border-color:var(--rojo);">
+      <h3 style="margin:0 0 10px 0;">Corregir registro</h3>
+      <label>Fecha de ingreso al patio</label>
+      <input type="date" id="iv-editar-fecha" value="${(v.patioFecha||v.gruaFecha||"").slice(0,10)}">
+      <div style="display:flex; gap:8px; margin-top:10px; flex-wrap:wrap;">
+        <button class="btn secondary small" onclick="guardarEdicionFechaInventario('${v.id}')">Guardar fecha</button>
+        <button class="btn secondary small" style="border-color:var(--rojo); color:var(--rojo);" onclick="eliminarVehiculoInventario('${v.id}')">Eliminar este registro</button>
+      </div>
+    </div>` : ""}
   `;
+}
+function guardarEdicionFechaInventario(id){
+  const v = db.vehiculos.find(x=>x.id===id); if(!v) return;
+  const fechaStr = document.getElementById("iv-editar-fecha").value;
+  if(!fechaStr){ toast("Elige una fecha"); return; }
+  const nuevaFecha = fechaStr + "T12:00:00";
+  v.gruaFecha = nuevaFecha;
+  v.patioFecha = nuevaFecha;
+  guardarVehiculo(v);
+  toast(`Fecha de ${v.placa} actualizada`);
+  renderAll();
+}
+function eliminarVehiculoInventario(id){
+  const v = db.vehiculos.find(x=>x.id===id); if(!v) return;
+  if(!confirm(`¿Eliminar por completo el registro de ${v.placa}? Esta acción no se puede deshacer.`)) return;
+  borrarVehiculoDoc(id);
+  db.vehiculos = db.vehiculos.filter(x=>x.id!==id);
+  toast(`Registro de ${v.placa} eliminado`);
+  document.getElementById("iv-resultado").innerHTML = "";
+  document.getElementById("iv-buscar-placa").value = "";
+  renderAll();
 }
 
 /* ---------- INVENTARIO / ADMINISTRATIVO ---------- */
-function renderInventario(){
-  const tbody = document.getElementById("tabla-inventario");
-  const vacio = document.getElementById("inventario-vacio");
-  const filtro = (document.getElementById("inv-buscar").value || "").toUpperCase();
-  const lista = db.vehiculos.filter(v=>v.placa.includes(filtro)).sort((a,b)=> new Date(b.gruaFecha) - new Date(a.gruaFecha));
-  if(!lista.length){ tbody.innerHTML=""; vacio.style.display="block"; return; }
-  vacio.style.display = "none";
-  tbody.innerHTML = lista.map(v=>{
-    const t = tarifaDe(v.tipoId); const opG = operadorDe(v.operadorId);
-    const c = calcularCostos(v);
-    return `<tr>
-      <td>${v.numeroInventario ?? "—"}</td>
-      <td>${v.placa}</td>
-      <td>${t?t.nombre:"—"}</td>
-      <td>${[v.marca,v.color].filter(Boolean).join(" · ") || "—"}</td>
-      <td><span class="badge ${v.motivo}">${motivoLabel(v.motivo)}</span></td>
-      <td><span class="badge estado-${v.estado}">${estadoLabel(v.estado)}</span></td>
-      <td>${nombreConductor(v)}</td>
-      <td>${v.patioVigilante || "—"}</td>
-      <td>${c.dias||"—"}</td>
-      <td>${fmt(c.valorParqueo)}</td>
-      <td>${fmt(c.valorGrua)}</td>
-      <td><b>${fmt(c.total)}</b></td>
-      <td>${v.ordenSalida ?? "—"}</td>
-      <td><button class="btn secondary small" onclick="generarInventarioPDF('${v.id}')">PDF</button></td>
-    </tr>`;
-  }).join("");
-}
-document.getElementById("inv-buscar").addEventListener("input", renderInventario);
 
 function renderListaTransito(){
   const cont = document.getElementById("lista-transito");
@@ -1317,6 +1428,34 @@ function renderListaTransito(){
 /* ---------- SALIDA ---------- */
 document.getElementById("s-btn-buscar").addEventListener("click", buscarParaSalida);
 document.getElementById("s-buscar-placa").addEventListener("keydown", e=>{ if(e.key==="Enter") buscarParaSalida(); });
+
+/* ---------- SALIDA DE TRÁNSITO (solo consulta) ---------- */
+document.getElementById("st-btn-buscar").addEventListener("click", buscarParaSalidaTransito);
+document.getElementById("st-buscar-placa").addEventListener("keydown", e=>{ if(e.key==="Enter") buscarParaSalidaTransito(); });
+function buscarParaSalidaTransito(){
+  const placa = document.getElementById("st-buscar-placa").value.trim().toUpperCase();
+  const cont = document.getElementById("st-resultado");
+  const v = db.vehiculos.find(x=>x.placa===placa);
+  if(!v){ cont.innerHTML = `<div class="empty subtle">No hay ningún vehículo con esa placa.</div>`; return; }
+  const t = tarifaDe(v.tipoId);
+  const c = calcularCostos(v);
+  cont.innerHTML = `
+    <div class="ticket-row ${v.motivo}" style="margin-bottom:16px;">
+      <div class="ticket-plate">${v.placa}</div>
+      <div class="ticket-info">
+        <div class="t1">N.°${v.numeroInventario ?? "—"} · ${t?t.nombre:"—"} <span class="badge ${v.motivo}">${motivoLabel(v.motivo)}</span> <span class="badge estado-${v.estado}">${estadoLabel(v.estado)}</span></div>
+        <div class="t2">Ingresó al patio: ${fechaCorta(v.patioFecha)} · ${c.dias||0} día(s) cobrados · Grúa: ${nombreConductor(v)}</div>
+        ${v.ordenSalida ? `<div class="t2">Orden de salida N.° ${v.ordenSalida} · ${fechaCorta(v.salidaFecha)}</div>` : ""}
+      </div>
+    </div>
+    <div class="split-box"><div class="flex-between"><span class="lbl">Parqueadero (${fmt(t?t.parqueo:0)} × ${c.dias||0})</span><span class="val mono">${fmt(c.valorParqueo)}</span></div></div>
+    <div class="split-box"><div class="flex-between"><span class="lbl">Grúa (único)</span><span class="val mono">${fmt(c.valorGrua)}</span></div></div>
+    <div class="divider"></div>
+    <div class="split-box" style="border-color:var(--amarillo);"><div class="flex-between"><span class="lbl">TOTAL</span><span class="val mono" style="color:var(--amarillo); font-size:24px;">${fmt(c.total)}</span></div></div>
+    <p class="subtle" style="margin-top:10px;">Este módulo es solo de consulta — la salida la confirma Secretaría desde su propio módulo.</p>
+    <button class="btn" style="width:100%; margin-top:10px;" onclick="generarInventarioPDF('${v.id}')">Descargar inventario (PDF)</button>
+  `;
+}
 
 let fotoAutorizaTemp = null;
 function buscarParaSalida(){
@@ -1404,9 +1543,7 @@ function renderLiquidaciones(){
   document.getElementById("liq-grua-total").textContent = fmt(totalGruaNeto);
 
   const cont = document.getElementById("lista-liquidaciones");
-  const gruas = db.usuarios.filter(u=>u.rol==="grua" && u.estado==="activo");
-  if(!gruas.length){ cont.innerHTML = `<div class="empty subtle">No hay operadores de grúa activos</div>`; return; }
-  cont.innerHTML = gruas.map(op=>{
+  cont.innerHTML = EMPRESAS_OPERADORAS.map(op=>{
     const vehOp = salidos.filter(v=>v.operadorId===op.id && !v.liquidado);
     const total = vehOp.reduce((s,v)=> s + calcularCostos(v).gruaNeta, 0);
     const pendPatio = db.vehiculos.filter(v=>v.operadorId===op.id && v.estado!=="salido").length;
@@ -1457,7 +1594,7 @@ document.getElementById("form-crear-usuario-admin").addEventListener("submit", e
   renderAll();
 });
 function rolLabel(r){
-  return {admin:"Administrador general", administrador:"Administrador", grua:"Operador de grúa", vigilante:"Vigilante de parqueadero", secretaria:"Secretaría"}[r] || r;
+  return {admin:"Administrador general", administrador:"Administrador", grua:"Operador de grúa", vigilante:"Encargado de patio", secretaria:"Secretaría", transito:"Secretaría de Tránsito"}[r] || r;
 }
 function renderOperadoresTab(){
   const esAdminGeneral = sesion && sesion.rol === "admin";
@@ -1476,8 +1613,9 @@ function renderOperadoresTab(){
       <div class="ticket-info"><div class="t1">${u.nombre}</div><div class="t2">usuario: ${u.usuario}${u.cedula?" · C.C. "+u.cedula:""}${u.placaGrua?" · Grúa: "+u.placaGrua:""}</div></div>
       <select id="rol-pend-${u.id}" style="width:auto; margin:0;" ${dis}>
         <option value="grua">Operador de grúa</option>
-        <option value="vigilante">Vigilante de parqueadero (patio)</option>
+        <option value="vigilante">Encargado de patio</option>
         <option value="secretaria">Secretaría (salidas)</option>
+              <option value="transito">Secretaría de Tránsito (consulta)</option>
         <option value="administrador">Administrador</option>
         <option value="admin">Administrador general</option>
       </select>
@@ -1613,8 +1751,7 @@ function matchTipoId(raw){
 }
 function poblarOperadoresImport(){
   const sel = document.getElementById("imp-operador");
-  const gruas = db.usuarios.filter(u=>u.rol==="grua" && u.estado==="activo");
-  sel.innerHTML = `<option value="">— Crear uno nuevo abajo —</option>` + gruas.map(o=>`<option value="${o.id}">${o.nombre}</option>`).join("");
+  sel.innerHTML = EMPRESAS_OPERADORAS.map(e=>`<option value="${e.id}">${e.nombre}</option>`).join("");
 }
 document.getElementById("imp-archivo").addEventListener("change", e=>{
   const file = e.target.files[0];
@@ -1655,17 +1792,7 @@ document.getElementById("imp-btn-importar").addEventListener("click", ()=>{
   const filas = leerFilasImportacion();
   if(!filas.length){ toast("No hay vehículos para importar en esta hoja"); return; }
   const motivo = document.getElementById("imp-motivo").value;
-  let operadorId = document.getElementById("imp-operador").value;
-  const nuevoNombre = document.getElementById("imp-operador-nuevo").value.trim();
-
-  if(!operadorId){
-    if(!nuevoNombre){ toast("Selecciona un operador existente o escribe uno nuevo"); return; }
-    const usuarioLogin = normalizarTexto(nuevoNombre).toLowerCase().replace(/\s+/g,".");
-    if(db.usuarios.some(u=>u.usuario===usuarioLogin)){ toast("Ya existe un usuario con ese nombre, selecciónalo de la lista de arriba"); return; }
-    operadorId = uid();
-    db.usuarios.push({id:operadorId, usuario:usuarioLogin, password:"cambiar123", nombre:nuevoNombre, rol:"grua", estado:"activo"});
-    toast(`Operador "${nuevoNombre}" creado — usuario: ${usuarioLogin} / contraseña temporal: cambiar123`);
-  }
+  const operadorId = document.getElementById("imp-operador").value;
 
   let importados = 0, omitidos = 0, tipoNoReconocido = 0;
   filas.forEach(row=>{
@@ -1802,6 +1929,21 @@ function rangoSemanaEnMes(anio, mesIdx, semanaN){
 function rangoMes(anio, mesIdx){
   return { inicio: new Date(anio, mesIdx, 1, 0,0,0), fin: new Date(anio, mesIdx+1, 0, 23,59,59) };
 }
+function rangoSemanaGrua(anio, mesIdx, semanaN){
+  // Semanas de pago: corte viernes 5:01 p.m. a viernes siguiente 5:00 p.m.
+  // La Semana 1 del mes es la primera cuyo viernes de cierre cae dentro de ese mes.
+  const primerDia = new Date(anio, mesIdx, 1);
+  const diaSemana = primerDia.getDay(); // 0=domingo...5=viernes...6=sábado
+  const diasHastaViernes = (5 - diaSemana + 7) % 7;
+  const primerViernes = new Date(anio, mesIdx, 1 + diasHastaViernes);
+  const finViernes = new Date(primerViernes);
+  finViernes.setDate(finViernes.getDate() + (semanaN-1)*7);
+  const fin = new Date(finViernes.getFullYear(), finViernes.getMonth(), finViernes.getDate(), 17,0,0);
+  const inicio = new Date(fin);
+  inicio.setDate(inicio.getDate()-7);
+  inicio.setHours(17,1,0,0);
+  return { inicio, fin };
+}
 function poblarAnioMes(selAnio, selMes){
   const hoy = new Date().getFullYear();
   selAnio.innerHTML = [hoy-1, hoy, hoy+1].map(a=>`<option value="${a}">${a}</option>`).join("");
@@ -1812,6 +1954,8 @@ function poblarAnioMes(selAnio, selMes){
 poblarAnioMes(document.getElementById("sec-anio"), document.getElementById("sec-mes"));
 poblarAnioMes(document.getElementById("ter-anio"), document.getElementById("ter-mes"));
 document.getElementById("sec-semana").innerHTML = [1,2,3,4].map(n=>`<option value="${n}">Semana ${n}</option>`).join("");
+document.getElementById("ter-empresa").innerHTML =
+  `<option value="todas">Ambas empresas juntas</option>` + EMPRESAS_OPERADORAS.map(e=>`<option value="${e.id}">Solo ${e.nombre}</option>`).join("");
 
 function renderInformeSecretaria(){
   const anio = Number(document.getElementById("sec-anio").value);
@@ -1844,17 +1988,34 @@ document.getElementById("btn-ver-detalle-sec").addEventListener("click", ()=>{
 });
 ["sec-anio","sec-mes","sec-semana"].forEach(id=>document.getElementById(id).addEventListener("change", renderInformeSecretaria));
 
+document.getElementById("ter-periodo").addEventListener("change", e=>{
+  document.getElementById("ter-semana-wrap").style.display = e.target.value==="semana" ? "block" : "none";
+  renderInformeTerceros();
+});
 function renderInformeTerceros(){
   const anio = Number(document.getElementById("ter-anio").value);
   const mes = Number(document.getElementById("ter-mes").value);
-  const periodo = rangoMes(anio, mes);
-  const salidas = db.vehiculos.filter(v=>dentroDe(v.salidaFecha, periodo.inicio, periodo.fin) && v.operadorId);
+  const esSemana = document.getElementById("ter-periodo").value === "semana";
+  const empresaSel = document.getElementById("ter-empresa").value;
+  const periodo = esSemana
+    ? rangoSemanaGrua(anio, mes, Number(document.getElementById("ter-semana").value))
+    : rangoMes(anio, mes);
+  document.getElementById("ter-rango").textContent =
+    `${fmtFechaLarga(periodo.inicio)} ${esSemana ? periodo.inicio.toLocaleTimeString("es-CO",{hour:"2-digit",minute:"2-digit"}) : ""} — ${fmtFechaLarga(periodo.fin)} ${esSemana ? "5:00 p.m." : ""}`;
+  let ingresos = db.vehiculos.filter(v=>dentroDe(v.gruaFecha, periodo.inicio, periodo.fin));
+  // El pago siempre se calcula sobre lo que SALIÓ dentro del periodo, no sobre lo que ingresó.
+  let salidas = db.vehiculos.filter(v=>dentroDe(v.salidaFecha, periodo.inicio, periodo.fin) && v.operadorId);
+  if(empresaSel !== "todas"){
+    ingresos = ingresos.filter(v=>v.operadorId===empresaSel);
+    salidas = salidas.filter(v=>v.operadorId===empresaSel);
+  }
   const totalNeto = salidas.reduce((s,v)=> s + calcularCostos(v).gruaNeta, 0);
+  document.getElementById("ter-ingresos").textContent = ingresos.length;
   document.getElementById("ter-salidas").textContent = salidas.length;
   document.getElementById("ter-total").textContent = fmt(totalNeto);
-  return { periodo, salidas };
+  return { periodo, ingresos, salidas, esSemana, empresaSel };
 }
-["ter-anio","ter-mes"].forEach(id=>document.getElementById(id).addEventListener("change", renderInformeTerceros));
+["ter-anio","ter-mes","ter-semana","ter-empresa"].forEach(id=>document.getElementById(id).addEventListener("change", renderInformeTerceros));
 
 function renderInformes(){
   const puedeVer = sesion && (sesion.rol === "admin" || sesion.rol === "administrador");
@@ -2063,8 +2224,8 @@ document.getElementById("btn-pdf-secretaria").addEventListener("click", ()=>{
 });
 
 document.getElementById("btn-pdf-terceros").addEventListener("click", ()=>{
-  const { periodo, salidas } = renderInformeTerceros();
-  if(!salidas.length){ toast("No hay pagos que reportar en este mes"); return; }
+  const { periodo, ingresos, salidas, esSemana, empresaSel } = renderInformeTerceros();
+  if(!salidas.length && !ingresos.length){ toast("No hay movimientos que reportar en este periodo"); return; }
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({unit:"pt", format:"a4"});
   const mx = 40, ancho = 595;
@@ -2073,11 +2234,46 @@ document.getElementById("btn-pdf-terceros").addEventListener("click", ()=>{
   doc.setTextColor(255,255,255); doc.setFont("helvetica","bold"); doc.setFontSize(16);
   doc.text("GÓMEZ NIETO", mx, 32);
   doc.setFont("helvetica","normal"); doc.setFontSize(9.5); doc.setTextColor(200,203,206);
-  doc.text("Informe mensual de pago a operadores de grúa", mx, 48);
-  doc.text(`${MESES_ES[periodo.inicio.getMonth()]} ${periodo.inicio.getFullYear()}`, ancho-mx, 48, {align:"right"});
+  doc.text(esSemana ? "Informe semanal de pago a operadores de grúa" : "Informe mensual de pago a operadores de grúa", mx, 48);
+  const empresaTxt = empresaSel==="todas" ? "Ambas empresas" : (empresaDe(empresaSel)?.nombre || "");
+  doc.text(`Empresa: ${empresaTxt}`, mx, 62);
+  const rangoTxt = esSemana
+    ? `${fmtFechaLarga(periodo.inicio)} 5:01 p.m. — ${fmtFechaLarga(periodo.fin)} 5:00 p.m.`
+    : `${MESES_ES[periodo.inicio.getMonth()]} ${periodo.inicio.getFullYear()}`;
+  doc.text(rangoTxt, ancho-mx, 48, {align:"right"});
   doc.setTextColor(0,0,0);
 
   let y = 92;
+
+  // Sección informativa: vehículos ingresados en el periodo (no afecta el pago)
+  doc.setFillColor(90,169,255); doc.roundedRect(mx, y-10, 10, 10, 2, 2, "F");
+  doc.setFont("helvetica","bold"); doc.setFontSize(11); doc.setTextColor(20,20,20);
+  doc.text(`VEHÍCULOS INGRESADOS EN EL PERIODO (${ingresos.length})`, mx+16, y-1);
+  y += 12;
+  if(ingresos.length){
+    doc.autoTable({
+      startY: y, margin: {left:mx, right:mx},
+      head: [["N.°","Placa","Operador","Fecha de ingreso"]],
+      body: ingresos.map(v=>[v.numeroInventario??"—", v.placa, nombreConductor(v), fechaCorta(v.gruaFecha)]),
+      theme: "striped",
+      styles: { font:"helvetica", fontSize:8.5, cellPadding:5, textColor:[30,30,30], lineColor:[225,225,225], lineWidth:0.4 },
+      headStyles: { fillColor:[28,31,34], textColor:255, fontStyle:"bold", fontSize:8.5 },
+      alternateRowStyles: { fillColor:[244,245,246] },
+    });
+    y = doc.lastAutoTable.finalY + 26;
+  } else {
+    doc.setFont("helvetica","italic"); doc.setFontSize(9.5); doc.setTextColor(120,120,120);
+    doc.text("Sin ingresos en este periodo.", mx, y); doc.setTextColor(0,0,0);
+    y += 20;
+  }
+
+  // Sección de pago: solo sobre lo que SALIÓ en el periodo
+  if(y > 720){ doc.addPage(); y = 40; }
+  doc.setFillColor(255,200,46); doc.roundedRect(mx, y-10, 10, 10, 2, 2, "F");
+  doc.setFont("helvetica","bold"); doc.setFontSize(11); doc.setTextColor(20,20,20);
+  doc.text(`PAGO POR VEHÍCULOS CON SALIDA EN EL PERIODO (${salidas.length})`, mx+16, y-1);
+  y += 18;
+
   const porOperador = {};
   salidas.forEach(v=>{ (porOperador[v.operadorId] = porOperador[v.operadorId] || []).push(v); });
   let totalGeneral = 0;
@@ -2110,13 +2306,22 @@ document.getElementById("btn-pdf-terceros").addEventListener("click", ()=>{
     });
     y = doc.lastAutoTable.finalY + 24;
   });
+  if(!salidas.length){
+    doc.setFont("helvetica","italic"); doc.setFontSize(9.5); doc.setTextColor(120,120,120);
+    doc.text("Sin salidas en este periodo — nada que pagar.", mx, y); doc.setTextColor(0,0,0);
+    y += 20;
+  }
   if(y > 760){ doc.addPage(); y = 50; }
   doc.setFillColor(28,31,34); doc.roundedRect(mx, y, ancho-mx*2, 34, 6, 6, "F");
   doc.setTextColor(255,255,255); doc.setFont("helvetica","bold"); doc.setFontSize(12);
   doc.text("TOTAL GENERAL A PAGAR", mx+16, y+22);
   doc.setTextColor(255,200,46); doc.setFontSize(14);
   doc.text(fmt(totalGeneral), ancho-mx-16, y+22, {align:"right"});
-  doc.save(`pago_operadores_${MESES_ES[periodo.inicio.getMonth()]}_${periodo.inicio.getFullYear()}.pdf`);
+  const sufijoArchivo = esSemana
+    ? `semana_${fmtFechaLarga(periodo.fin).replaceAll("/","-")}`
+    : `${MESES_ES[periodo.inicio.getMonth()]}_${periodo.inicio.getFullYear()}`;
+  const sufijoEmpresa = empresaSel==="todas" ? "" : "_" + (empresaDe(empresaSel)?.nombre||"").replaceAll(" ","-");
+  doc.save(`pago_operadores_${sufijoArchivo}${sufijoEmpresa}.pdf`);
 });
 
 /* ---------- PAGOS Y GASTOS ---------- */
@@ -2227,7 +2432,7 @@ function renderBalances(){
 function renderAll(){
   renderDashboard();
   renderListaTransito();
-  renderInventario();
+
   renderLiquidaciones();
   renderInformes();
   renderOperadoresTab();
