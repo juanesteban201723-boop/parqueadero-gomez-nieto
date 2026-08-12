@@ -384,6 +384,16 @@
         </div>
         <p class="subtle" style="margin:6px 0 0 0;">Si en algún momento se importó una hoja de Excel con otro orden de columnas, quedaron registros con datos revueltos (fechas en el campo de placa, montos absurdos, etc.). Este botón identifica y elimina SOLO esos registros dañados — nunca toca los 812 vehículos reales de la carga inicial ni nada que hayas modificado tú.</p>
       </div>
+      <div class="card" style="margin-bottom:20px; border-color:var(--amarillo);">
+        <h3 style="margin:0 0 6px 0;">Reasignar placas a otra empresa</h3>
+        <p class="subtle" style="margin:0 0 10px 0;">Si un vehículo quedó cargado a la empresa equivocada (por ejemplo, lo trajo Operador Grúa pero quedó como Gómez Nieto), escribe aquí las placas (separadas por coma) y elige la empresa correcta.</p>
+        <label>Placas a corregir</label>
+        <input type="text" id="reasig-placas" placeholder="Ej: HGH65D, JSI84H, SXD04">
+        <label>Empresa correcta</label>
+        <select id="reasig-empresa"></select>
+        <button class="btn small" id="btn-reasignar-empresa" style="margin-top:8px;">Reasignar</button>
+        <div id="reasig-resultado" class="subtle" style="margin-top:10px;"></div>
+      </div>
       <div class="card" style="margin-bottom:20px;">
         <h3>Importar vehículos desde Excel (carga inicial)</h3>
         <p class="subtle" style="margin-top:0;">Sube tu archivo de control actual para cargar de una vez los vehículos que ya tienes en el patio. Quedan en estado "En patio" cobrando desde su fecha real de ingreso.</p>
@@ -791,7 +801,7 @@ document.getElementById("btn-crear-cuenta").addEventListener("click", async ()=>
   const usuario = document.getElementById("reg-usuario").value.trim();
   const password = document.getElementById("reg-password").value;
   const cedula = document.getElementById("reg-cedula").value.trim();
-  const placaGrua = document.getElementById("reg-placa-grua").value.trim().toUpperCase();
+  const placaGrua = normalizarPlaca(document.getElementById("reg-placa-grua").value);
   if(!nombre || !usuario || !password){ mostrarLoginMsg("Completa todos los campos.", "var(--rojo)"); return; }
   if(usuario.includes("@") || usuario.toLowerCase().includes(".com") || usuario.toLowerCase().includes(".co")){
     mostrarLoginMsg("En \"Usuario\" no pongas tu correo — escribe solo un nombre corto, ej: julian, alejandra.grua", "var(--rojo)");
@@ -871,6 +881,7 @@ auth.onAuthStateChanged(async (user)=>{
 
 /* ---------- Utilidades ---------- */
 function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
+function normalizarPlaca(p){ return (p||"").toString().trim().toUpperCase().replace(/[\s.\-]+/g,""); }
 const fmt = n => "$" + Math.round(n).toLocaleString("es-CO");
 function toast(msg){ const t=document.getElementById("toast"); t.textContent=msg; t.classList.add("show"); setTimeout(()=>t.classList.remove("show"),2600); }
 function tarifaDe(id){ return db.tarifas.find(t=>t.id===id); }
@@ -1045,7 +1056,7 @@ document.getElementById("btn-cerrar-foto").addEventListener("click", ()=> docume
 /* ---------- FORM RECEPCIÓN GRÚA ---------- */
 document.getElementById("form-grua").addEventListener("submit", async e=>{
   e.preventDefault();
-  const placa = document.getElementById("g-placa").value.trim().toUpperCase();
+  const placa = normalizarPlaca(document.getElementById("g-placa").value);
   if(!placa){ toast("Ingresa la placa"); return; }
   if(db.vehiculos.some(v=>v.placa===placa && v.estado!=="salido")){ toast("Ya existe un vehículo activo con esa placa"); return; }
   if(sesion && sesion.rol==="grua" && !sesion.empresaId){ toast("Tu cuenta todavía no tiene una empresa asignada — pídele al administrador que te la asigne en Usuarios"); return; }
@@ -1091,7 +1102,7 @@ let patioVehId = null;
 document.getElementById("p-btn-buscar").addEventListener("click", buscarParaPatio);
 document.getElementById("p-buscar-placa").addEventListener("keydown", e=>{ if(e.key==="Enter") buscarParaPatio(); });
 document.getElementById("p-btn-ingreso-directo").addEventListener("click", ()=>{
-  const placa = document.getElementById("p-buscar-placa").value.trim().toUpperCase();
+  const placa = normalizarPlaca(document.getElementById("p-buscar-placa").value);
   if(placa && db.vehiculos.some(x=>x.placa===placa && x.estado!=="salido")){
     toast("Ya hay un vehículo activo con esa placa");
     return;
@@ -1100,7 +1111,7 @@ document.getElementById("p-btn-ingreso-directo").addEventListener("click", ()=>{
 });
 
 function buscarParaPatio(){
-  const placa = document.getElementById("p-buscar-placa").value.trim().toUpperCase();
+  const placa = normalizarPlaca(document.getElementById("p-buscar-placa").value);
   if(!placa){ toast("Escribe una placa"); return; }
   const cont = document.getElementById("p-resultado");
   const v = db.vehiculos.find(x=>x.placa===placa && x.estado==="transito");
@@ -1172,7 +1183,7 @@ function mostrarFormularioIngresoDirecto(placa){
 }
 async function confirmarIngresoDirecto(){
   if(!sesion){ toast("Inicia sesión primero"); return; }
-  const placa = document.getElementById("pd-placa").value.trim().toUpperCase();
+  const placa = normalizarPlaca(document.getElementById("pd-placa").value);
   if(!placa){ toast("Ingresa la placa"); return; }
   if(db.vehiculos.some(v=>v.placa===placa && v.estado!=="salido")){ toast("Ya existe un vehículo activo con esa placa"); return; }
   const empresaSel = document.getElementById("pd-empresa").value;
@@ -1441,7 +1452,7 @@ async function generarInventarioPDF(vehId){
 document.getElementById("iv-btn-buscar").addEventListener("click", buscarInventarioPuntual);
 document.getElementById("iv-buscar-placa").addEventListener("keydown", e=>{ if(e.key==="Enter") buscarInventarioPuntual(); });
 function buscarInventarioPuntual(){
-  const placa = document.getElementById("iv-buscar-placa").value.trim().toUpperCase();
+  const placa = normalizarPlaca(document.getElementById("iv-buscar-placa").value);
   const cont = document.getElementById("iv-resultado");
   const v = db.vehiculos.find(x=>x.placa===placa);
   if(!v){ cont.innerHTML = `<div class="empty subtle">No hay ningún vehículo con esa placa.</div>`; return; }
@@ -1531,7 +1542,7 @@ document.getElementById("s-buscar-placa").addEventListener("keydown", e=>{ if(e.
 document.getElementById("st-btn-buscar").addEventListener("click", buscarParaSalidaTransito);
 document.getElementById("st-buscar-placa").addEventListener("keydown", e=>{ if(e.key==="Enter") buscarParaSalidaTransito(); });
 function buscarParaSalidaTransito(){
-  const placa = document.getElementById("st-buscar-placa").value.trim().toUpperCase();
+  const placa = normalizarPlaca(document.getElementById("st-buscar-placa").value);
   const cont = document.getElementById("st-resultado");
   const v = db.vehiculos.find(x=>x.placa===placa);
   if(!v){ cont.innerHTML = `<div class="empty subtle">No hay ningún vehículo con esa placa.</div>`; return; }
@@ -1556,7 +1567,7 @@ function buscarParaSalidaTransito(){
 
 let fotoAutorizaTemp = null;
 function buscarParaSalida(){
-  const placa = document.getElementById("s-buscar-placa").value.trim().toUpperCase();
+  const placa = normalizarPlaca(document.getElementById("s-buscar-placa").value);
   const cont = document.getElementById("s-resultado");
   const v = db.vehiculos.find(x=>x.placa===placa && x.estado==="patio");
   if(!v){
@@ -1916,7 +1927,7 @@ function leerFilasImportacion(){
   if(!ws) return [];
   const filas = XLSX.utils.sheet_to_json(ws, {header:1, raw:false});
   return filas.filter(row=>{
-    const placa = (row[1]||"").toString().trim().toUpperCase();
+    const placa = normalizarPlaca(row[1]);
     return placa && placa!=="PLACA" && placa!=="P";
   });
 }
@@ -1935,7 +1946,7 @@ document.getElementById("imp-btn-importar").addEventListener("click", async ()=>
 
   let importados = 0, omitidos = 0, tipoNoReconocido = 0;
   for(const row of filas){
-    const placa = (row[1]||"").toString().trim().toUpperCase();
+    const placa = normalizarPlaca(row[1]);
     if(!placa){ continue; }
     if(db.vehiculos.some(v=>v.placa===placa && v.estado!=="salido")){ omitidos++; continue; }
 
@@ -2758,7 +2769,6 @@ async function eliminarVehiculosDuplicados(){
   btn.disabled = true;
   const original = btn.textContent;
   try{
-    const normalizarPlaca = (p) => (p||"").toString().trim().toUpperCase().replace(/[\s.\-]+/g,"");
     const porPlaca = {};
     db.vehiculos.forEach(v=>{ const clave = normalizarPlaca(v.placa); (porPlaca[clave] = porPlaca[clave] || []).push(v); });
     const grupos = Object.values(porPlaca).filter(g=>g.length>1);
@@ -2801,7 +2811,6 @@ async function limpiarRegistrosDanados(){
   btn.disabled = true;
   const original = btn.textContent;
   try{
-    const normalizarPlaca = (p) => (p||"").toString().trim().toUpperCase().replace(/[\s.\-]+/g,"");
     const placasValidas = new Set(Object.keys(MAPA_FECHAS_VERIFICADO));
     // Solo se considera "dañado" un vehículo que: viene de una importación (nunca se tocó a mano)
     // y su placa NO está entre las 812 placas reales verificadas del Excel.
@@ -2833,6 +2842,34 @@ async function limpiarRegistrosDanados(){
 document.getElementById("btn-limpiar-basura").addEventListener("click", ()=>{
   if(!(sesion && sesion.rol==="admin")){ toast("Solo el administrador general puede hacer esto"); return; }
   limpiarRegistrosDanados();
+});
+
+document.getElementById("reasig-empresa").innerHTML = EMPRESAS_OPERADORAS.map(e=>`<option value="${e.id}">${e.nombre}</option>`).join("");
+document.getElementById("btn-reasignar-empresa").addEventListener("click", async ()=>{
+  if(!(sesion && sesion.rol==="admin")){ toast("Solo el administrador general puede hacer esto"); return; }
+  const crudo = document.getElementById("reasig-placas").value;
+  const placas = crudo.split(",").map(p=>normalizarPlaca(p)).filter(Boolean);
+  if(!placas.length){ toast("Escribe al menos una placa"); return; }
+  const empresaId = document.getElementById("reasig-empresa").value;
+  const empresa = empresaDe(empresaId);
+  const btn = document.getElementById("btn-reasignar-empresa");
+  btn.disabled = true;
+  const encontradas = [];
+  const noEncontradas = [];
+  for(const placa of placas){
+    const v = db.vehiculos.find(x=>normalizarPlaca(x.placa)===placa);
+    if(!v){ noEncontradas.push(placa); continue; }
+    v.operadorId = empresaId;
+    await guardarVehiculo(v);
+    encontradas.push(placa);
+  }
+  let msg = `Reasignadas a ${empresa.nombre}: ${encontradas.join(", ") || "ninguna"}.`;
+  if(noEncontradas.length) msg += ` No se encontraron: ${noEncontradas.join(", ")}.`;
+  document.getElementById("reasig-resultado").textContent = msg;
+  toast(`${encontradas.length} vehículo(s) reasignado(s) a ${empresa.nombre}`);
+  document.getElementById("reasig-placas").value = "";
+  btn.disabled = false;
+  renderAll();
 });
 
 document.getElementById("btn-quitar-duplicados").addEventListener("click", ()=>{
