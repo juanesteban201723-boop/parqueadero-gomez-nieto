@@ -695,6 +695,13 @@ firebase.initializeApp(firebaseConfig);
 const auth = firebase.auth();
 const dbFire = firebase.firestore();
 const storageFire = firebase.storage();
+// Caché local: guarda los datos en el dispositivo para que la próxima vez que se abra
+// la app cargue de inmediato desde ahí, sin esperar a bajar todo de internet otra vez.
+// Solo aplica en la última pestaña/dispositivo que se usó — si el error "failed-precondition"
+// aparece (varias pestañas abiertas a la vez), la app sigue funcionando normal, sin caché.
+dbFire.enablePersistence({synchronizeTabs: false}).catch(err=>{
+  console.warn("No se pudo activar el caché local de Firestore:", err.code);
+});
 const DOMINIO_FALSO = "gomeznieto-app.com";
 function usuarioAEmail(usuario){
   return usuario.toLowerCase().trim().replace(/[^a-z0-9._-]/g,"") + "@" + DOMINIO_FALSO;
