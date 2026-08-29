@@ -4,9 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Gómez Nieto · Parqueadero y Grúas</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" defer></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js" defer></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js" defer></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
@@ -316,7 +316,7 @@
 
     <div class="card">
       <h3 style="margin:0 0 6px 0;">Informe 3 — Para operadores de grúa</h3>
-      <p class="subtle" style="margin-top:0;">Elige si quieres el reporte de una semana puntual (corte viernes 5:01 p.m. a viernes 5:00 p.m.) o el mes completo. Muestra lo que ingresó, lo que salió y lo que se debe pagar.</p>
+      <p class="subtle" style="margin-top:0;">Elige si quieres el reporte de una semana puntual (de sábado a viernes, se liquida el viernes) o el mes completo. Muestra lo que ingresó, lo que salió y lo que se debe pagar.</p>
       <div class="grid grid-2" style="margin-bottom:12px;">
         <div><label>Año</label><select id="ter-anio"></select></div>
         <div><label>Mes</label><select id="ter-mes"></select></div>
@@ -324,7 +324,7 @@
       <label>Periodo</label>
       <select id="ter-periodo">
         <option value="mes">Mes completo</option>
-        <option value="semana">Semana puntual (corte viernes 5:00 p.m.)</option>
+        <option value="semana">Semana puntual (sábado a viernes)</option>
       </select>
       <div id="ter-semana-wrap" style="display:none;">
         <label>¿Cuál semana del mes?</label>
@@ -673,7 +673,7 @@ const gruasCol = dbFire.collection("gruas");
 const gastosCol = dbFire.collection("gastos");
 const configCol = dbFire.collection("config");
 
-async function guardarVehiculo(v){ try{ await vehiculosCol.doc(v.id).set(v); }catch(e){ console.error(e); toast("⚠ No se pudo guardar en la nube. Revisa tu internet."); } }
+async function guardarVehiculo(v){ try{ await vehiculosCol.doc(v.id).set(v); return true; }catch(e){ console.error(e); toast("⚠ No se pudo guardar en la nube. Revisa tu internet e inténtalo de nuevo."); return false; } }
 async function borrarVehiculoDoc(id){ try{ await vehiculosCol.doc(id).delete(); }catch(e){ console.error(e); } }
 async function guardarUsuario(u){ try{ await usuariosCol.doc(u.id).set(u); }catch(e){ console.error(e); toast("⚠ No se pudo guardar en la nube."); } }
 async function borrarUsuarioDoc(id){ try{ await usuariosCol.doc(id).delete(); }catch(e){ console.error(e); } }
@@ -1085,13 +1085,17 @@ document.getElementById("form-grua").addEventListener("submit", async e=>{
     patioVigilante: null, patioObs: "", patioFotos: [], patioFecha: null,
     salidaFecha: null, ordenSalida: null, liquidado: false,
   };
+  const ok = await guardarVehiculo(veh);
+  if(btnSubmit) btnSubmit.disabled = false;
+  if(!ok){
+    // No se guardó en la nube: no lo dejamos en la lista local para no simular un registro que no existe de verdad.
+    return;
+  }
   db.vehiculos.push(veh);
-  await guardarVehiculo(veh);
   toast(`Vehículo ${placa} registrado con inventario N.° ${numeroInventario} — en camino al parqueadero`);
   document.getElementById("form-grua").reset();
   fotosGruaTemp = []; renderFotosPreview("g-fotos-preview", fotosGruaTemp, "quitarFotoGrua");
   poblarTipos(selGTipo);
-  if(btnSubmit) btnSubmit.disabled = false;
   renderAll();
 });
 
@@ -1259,16 +1263,24 @@ function mostrarFormularioPatio(v){
 }
 function quitarFotoPatio(i){ fotosPatioTemp.splice(i,1); renderFotosPreview("p-fotos-preview", fotosPatioTemp, "quitarFotoPatio"); }
 
-function confirmarPatio(){
+async function confirmarPatio(){
   const v = db.vehiculos.find(x=>x.id===patioVehId);
   if(!v) return;
   if(!sesion){ toast("Inicia sesión primero"); return; }
+  const btn = document.getElementById("p-btn-confirmar");
+  if(btn){ btn.disabled = true; btn.textContent = "Guardando..."; }
   v.patioVigilante = sesion.nombre;
   v.patioObs = document.getElementById("p-obs").value.trim();
   v.patioFotos = fotosPatioTemp.slice();
   v.patioFecha = new Date().toISOString();
   v.estado = "patio";
-  guardarVehiculo(v);
+  const ok = await guardarVehiculo(v);
+  if(btn){ btn.disabled = false; btn.textContent = "Confirmar ingreso al parqueadero (inicia cobro)"; }
+  if(!ok){
+    // No se guardó: revertimos el estado local para que el vigilante lo intente de nuevo con los mismos datos.
+    v.estado = "grua";
+    return;
+  }
   toast(`${v.placa} ingresó al parqueadero — inicia el cobro diario`);
   document.getElementById("p-resultado").innerHTML = "";
   document.getElementById("p-buscar-placa").value = "";
@@ -2081,7 +2093,7 @@ function rangoMes(anio, mesIdx){
   return { inicio: new Date(anio, mesIdx, 1, 0,0,0), fin: new Date(anio, mesIdx+1, 0, 23,59,59) };
 }
 function rangoSemanaGrua(anio, mesIdx, semanaN){
-  // Semanas de pago: corte viernes 5:01 p.m. a viernes siguiente 5:00 p.m.
+  // Semanas de pago: corte sábado 00:00 a viernes siguiente 23:59:59 (se liquida el viernes).
   // La Semana 1 del mes es la primera cuyo viernes de cierre cae dentro de ese mes.
   const primerDia = new Date(anio, mesIdx, 1);
   const diaSemana = primerDia.getDay(); // 0=domingo...5=viernes...6=sábado
@@ -2089,10 +2101,10 @@ function rangoSemanaGrua(anio, mesIdx, semanaN){
   const primerViernes = new Date(anio, mesIdx, 1 + diasHastaViernes);
   const finViernes = new Date(primerViernes);
   finViernes.setDate(finViernes.getDate() + (semanaN-1)*7);
-  const fin = new Date(finViernes.getFullYear(), finViernes.getMonth(), finViernes.getDate(), 17,0,0);
+  const fin = new Date(finViernes.getFullYear(), finViernes.getMonth(), finViernes.getDate(), 23,59,59);
   const inicio = new Date(fin);
-  inicio.setDate(inicio.getDate()-7);
-  inicio.setHours(17,1,0,0);
+  inicio.setDate(inicio.getDate()-6); // sábado de esa misma semana
+  inicio.setHours(0,0,0,0);
   return { inicio, fin };
 }
 function poblarAnioMes(selAnio, selMes){
@@ -2152,7 +2164,7 @@ function renderInformeTerceros(){
     ? rangoSemanaGrua(anio, mes, Number(document.getElementById("ter-semana").value))
     : rangoMes(anio, mes);
   document.getElementById("ter-rango").textContent =
-    `${fmtFechaLarga(periodo.inicio)} ${esSemana ? periodo.inicio.toLocaleTimeString("es-CO",{hour:"2-digit",minute:"2-digit"}) : ""} — ${fmtFechaLarga(periodo.fin)} ${esSemana ? "5:00 p.m." : ""}`;
+    `${fmtFechaLarga(periodo.inicio)}${esSemana ? " (sábado)" : ""} — ${fmtFechaLarga(periodo.fin)}${esSemana ? " (viernes)" : ""}`;
   let ingresos = db.vehiculos.filter(v=>dentroDe(v.gruaFecha, periodo.inicio, periodo.fin));
   // El pago siempre se calcula sobre lo que SALIÓ dentro del periodo, no sobre lo que ingresó.
   let salidas = db.vehiculos.filter(v=>dentroDe(v.salidaFecha, periodo.inicio, periodo.fin) && v.operadorId);
@@ -2389,7 +2401,7 @@ document.getElementById("btn-pdf-terceros").addEventListener("click", ()=>{
   const empresaTxt = empresaSel==="todas" ? "Ambas empresas" : (empresaDe(empresaSel)?.nombre || "");
   doc.text(`Empresa: ${empresaTxt}`, mx, 62);
   const rangoTxt = esSemana
-    ? `${fmtFechaLarga(periodo.inicio)} 5:01 p.m. — ${fmtFechaLarga(periodo.fin)} 5:00 p.m.`
+    ? `Sábado ${fmtFechaLarga(periodo.inicio)} — Viernes ${fmtFechaLarga(periodo.fin)}`
     : `${MESES_ES[periodo.inicio.getMonth()]} ${periodo.inicio.getFullYear()}`;
   doc.text(rangoTxt, ancho-mx, 48, {align:"right"});
   doc.setTextColor(0,0,0);
