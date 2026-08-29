@@ -505,6 +505,33 @@
     </div>
     <div id="balances-admin-content">
       <div class="card" style="margin-bottom:20px;">
+        <h3 style="margin:0 0 10px 0;">Gastos fijos mensuales</h3>
+        <p class="subtle" style="margin-top:0;">Costos que se repiten cada mes (arriendo, nómina, servicios). Una vez los registras aquí, se suman automáticamente al balance de cada mes sin que tengas que volver a escribirlos en "Pagos y Gastos".</p>
+        <form id="form-gasto-fijo" style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end;">
+          <div style="min-width:190px; flex:1;"><label>Concepto</label><input type="text" id="gf-concepto" placeholder="Ej: Arriendo del lote" required style="margin-bottom:0;"></div>
+          <div style="min-width:190px;">
+            <label>Categoría</label>
+            <select id="gf-categoria" style="margin-bottom:0;">
+              <option value="arriendo">Arriendo</option>
+              <option value="nomina">Nómina</option>
+              <option value="servicios">Servicios públicos</option>
+              <option value="mantenimiento">Mantenimiento</option>
+              <option value="otro">Otro</option>
+            </select>
+          </div>
+          <div style="min-width:150px;"><label>Valor mensual</label><input type="number" id="gf-valor" min="0" step="100" placeholder="0" required style="margin-bottom:0;"></div>
+          <div style="min-width:150px;"><label>Aplica desde</label><input type="month" id="gf-desde" required style="margin-bottom:0;"></div>
+          <button class="btn" type="submit">Agregar gasto fijo</button>
+        </form>
+      </div>
+      <div class="card" style="margin-bottom:20px;">
+        <h3 style="margin:0 0 10px 0;">Gastos fijos registrados</h3>
+        <div style="overflow-x:auto;">
+          <table><thead><tr><th>Concepto</th><th>Categoría</th><th>Valor mensual</th><th>Desde</th><th>Estado</th><th></th></tr></thead><tbody id="tabla-gastos-fijos"></tbody></table>
+          <div id="gastos-fijos-vacio" class="empty" style="display:none;"><div class="big">📌</div>Aún no has registrado gastos fijos</div>
+        </div>
+      </div>
+      <div class="card" style="margin-bottom:20px;">
         <div class="flex-between">
           <h3 style="margin:0;">Balance mensual</h3>
           <div style="display:flex; gap:8px; align-items:center;">
@@ -513,16 +540,23 @@
             <button class="btn secondary small" id="bal-mes-next">Mes siguiente ▶</button>
           </div>
         </div>
-        <p class="subtle" style="margin-top:6px;">Ingresos = neto final que queda para el parqueadero (ya descontado lo de Secretaría, Pagos a terceros y grúa) por vehículos que salieron ese mes. Egresos = todo lo registrado en "Pagos y Gastos" ese mes, incluyendo pagos a grúas.</p>
+        <p class="subtle" style="margin-top:6px;">Ingresos = neto final que queda para el parqueadero (ya descontado lo de Secretaría, Pagos a terceros y grúa) por vehículos que salieron ese mes. Egresos = todo lo registrado en "Pagos y Gastos" ese mes, más los gastos fijos que aplican ese mes.</p>
       </div>
       <div class="grid grid-3" style="margin-bottom:20px;">
         <div class="kpi a-verde"><div class="num mono" id="bal-ingresos">$0</div><div class="lbl">Ingresos del mes</div></div>
         <div class="kpi a-rojo"><div class="num mono" id="bal-egresos">$0</div><div class="lbl">Egresos del mes</div></div>
         <div class="kpi" id="bal-resultado-kpi"><div class="num mono" id="bal-resultado">$0</div><div class="lbl" id="bal-resultado-lbl">Resultado del mes</div></div>
       </div>
-      <div class="card">
+      <div class="card" style="margin-bottom:20px;">
         <h3>Desglose de egresos por categoría</h3>
         <div id="bal-desglose"></div>
+      </div>
+      <div class="card">
+        <div class="flex-between">
+          <h3 style="margin:0;">Informe financiero</h3>
+          <button class="btn small" id="bal-btn-pdf">Descargar informe del mes (PDF)</button>
+        </div>
+        <p class="subtle" style="margin-top:6px;">Incluye ingresos, egresos detallados (con los gastos fijos marcados aparte) y el resultado del mes.</p>
       </div>
     </div>
   </div>
@@ -671,6 +705,7 @@ const vehiculosCol = dbFire.collection("vehiculos");
 const usuariosCol = dbFire.collection("usuarios");
 const gruasCol = dbFire.collection("gruas");
 const gastosCol = dbFire.collection("gastos");
+const gastosFijosCol = dbFire.collection("gastosFijos");
 const configCol = dbFire.collection("config");
 
 async function guardarVehiculo(v){ try{ await vehiculosCol.doc(v.id).set(v); return true; }catch(e){ console.error(e); toast("⚠ No se pudo guardar en la nube. Revisa tu internet e inténtalo de nuevo."); return false; } }
@@ -701,13 +736,15 @@ async function siguienteNumero(campo){
 async function borrarGruaDoc(id){ try{ await gruasCol.doc(id).delete(); }catch(e){ console.error(e); } }
 async function guardarGasto(g){ try{ await gastosCol.doc(g.id).set(g); }catch(e){ console.error(e); toast("⚠ No se pudo guardar en la nube."); } }
 async function borrarGastoDoc(id){ try{ await gastosCol.doc(id).delete(); }catch(e){ console.error(e); } }
+async function guardarGastoFijo(g){ try{ await gastosFijosCol.doc(g.id).set(g); return true; }catch(e){ console.error(e); toast("⚠ No se pudo guardar en la nube."); return false; } }
+async function borrarGastoFijoDoc(id){ try{ await gastosFijosCol.doc(id).delete(); }catch(e){ console.error(e); } }
 async function guardarTarifas(){ try{ await configCol.doc("tarifas").set({lista: db.tarifas}); }catch(e){ console.error(e); toast("⚠ No se pudo guardar en la nube."); } }
 async function guardarContadores(){ try{ await configCol.doc("contadores").set({consecutivoInventario: db.consecutivoInventario, consecutivoSalida: db.consecutivoSalida}); }catch(e){ console.error(e); } }
 // Compatibilidad con el resto del código (versiones previas llamaban saveDB() tras cada cambio).
 // El guardado real ahora ocurre en cada función guardarXxx() específica, señalada en cada punto del código.
 function saveDB(){}
 
-let db = { tarifas: TARIFAS_DEFAULT, vehiculos: [], usuarios: [], gruas: [], gastos: [], consecutivoInventario: 1, consecutivoSalida: 1 };
+let db = { tarifas: TARIFAS_DEFAULT, vehiculos: [], usuarios: [], gruas: [], gastos: [], gastosFijos: [], consecutivoInventario: 1, consecutivoSalida: 1 };
 
 // Si varias personas escriben casi al mismo tiempo, agrupamos esas actualizaciones
 // en una sola repintada en vez de una por cada cambio (evita que la app se sienta lenta).
@@ -721,6 +758,7 @@ vehiculosCol.onSnapshot(snap=>{ db.vehiculos = snap.docs.map(d=>d.data()); rende
 usuariosCol.onSnapshot(snap=>{ db.usuarios = snap.docs.map(d=>({id:d.id, ...d.data()})); renderAllDebounced(); actualizarCampoOperadorGrua(); }, err=>console.error(err));
 gruasCol.onSnapshot(snap=>{ db.gruas = snap.docs.map(d=>d.data()); renderAllDebounced(); }, err=>console.error(err));
 gastosCol.onSnapshot(snap=>{ db.gastos = snap.docs.map(d=>d.data()); renderAllDebounced(); }, err=>console.error(err));
+gastosFijosCol.onSnapshot(snap=>{ db.gastosFijos = snap.docs.map(d=>d.data()); renderAllDebounced(); }, err=>console.error(err));
 configCol.doc("tarifas").onSnapshot(doc=>{ db.tarifas = (doc.exists && doc.data().lista && doc.data().lista.length) ? doc.data().lista : TARIFAS_DEFAULT; renderAllDebounced(); }, err=>console.error(err));
 configCol.doc("contadores").onSnapshot(doc=>{ if(doc.exists){ db.consecutivoInventario = doc.data().consecutivoInventario||1; db.consecutivoSalida = doc.data().consecutivoSalida||1; } }, err=>console.error(err));
 
@@ -2562,6 +2600,8 @@ function renderBalances(){
   document.getElementById("balances-admin-content").style.display = esAdminGeneral ? "block" : "none";
   if(!esAdminGeneral) return;
 
+  renderGastosFijosTabla();
+
   const periodo = periodoMesActual();
   document.getElementById("bal-mes-label").textContent = periodo.label.charAt(0).toUpperCase()+periodo.label.slice(1) + (mesOffset===0?"  · mes actual":"");
 
@@ -2571,7 +2611,10 @@ function renderBalances(){
   const ingresos = salidasMes.reduce((s,v)=> s + calcularCostos(v).parqueoNeto, 0);
 
   const gastosMes = db.gastos.filter(g=>dentro(g.fecha));
-  const egresos = gastosMes.reduce((s,g)=>s+g.valor,0);
+  const fijosDelMes = gastosFijosAplicablesEnPeriodo(periodo);
+  const egresosVariables = gastosMes.reduce((s,g)=>s+g.valor,0);
+  const egresosFijos = fijosDelMes.reduce((s,g)=>s+g.valor,0);
+  const egresos = egresosVariables + egresosFijos;
 
   const resultado = ingresos - egresos;
   document.getElementById("bal-ingresos").textContent = fmt(ingresos);
@@ -2583,12 +2626,153 @@ function renderBalances(){
 
   const porCategoria = {};
   gastosMes.forEach(g=>{ porCategoria[g.categoria] = (porCategoria[g.categoria]||0) + g.valor; });
+  fijosDelMes.forEach(g=>{ porCategoria[g.categoria] = (porCategoria[g.categoria]||0) + g.valor; });
   const cats = Object.keys(porCategoria);
   document.getElementById("bal-desglose").innerHTML = cats.length ? cats.map(c=>`
     <div class="flex-between" style="padding:8px 0; border-bottom:1px solid var(--linea);">
       <span>${CATEGORIA_GASTO_LABELS[c]||c}</span>
       <span class="mono">${fmt(porCategoria[c])}</span>
-    </div>`).join("") : `<div class="empty subtle">Sin egresos registrados este mes</div>`;
+    </div>`).join("") + (fijosDelMes.length ? `<p class="subtle" style="margin-top:10px;">Incluye ${fijosDelMes.length} gasto(s) fijo(s) por ${fmt(egresosFijos)}: ${fijosDelMes.map(g=>g.concepto).join(", ")}.</p>` : "") : `<div class="empty subtle">Sin egresos registrados este mes</div>`;
+
+  window.__ultimoBalance = { periodo, ingresos, egresos, egresosVariables, egresosFijos, resultado, porCategoria, gastosMes, fijosDelMes };
+}
+
+// Un gasto fijo aplica a un mes si ya estaba vigente ("desde") para ese mes,
+// y si se desactivó, solo deja de aplicar a partir del mes en que se desactivó ("hasta").
+function gastosFijosAplicablesEnPeriodo(periodo){
+  return db.gastosFijos.filter(g=>{
+    const desde = new Date(g.desde+"T00:00:00");
+    if(desde > periodo.inicio) return false;
+    if(g.hasta){ const hasta = new Date(g.hasta+"T00:00:00"); if(hasta <= periodo.inicio) return false; }
+    return true;
+  });
+}
+
+function renderGastosFijosTabla(){
+  const cont = document.getElementById("tabla-gastos-fijos");
+  const vacio = document.getElementById("gastos-fijos-vacio");
+  const lista = db.gastosFijos.slice().sort((a,b)=> a.concepto.localeCompare(b.concepto));
+  vacio.style.display = lista.length ? "none" : "block";
+  cont.innerHTML = lista.map(g=>`
+    <tr>
+      <td>${g.concepto}</td>
+      <td>${CATEGORIA_GASTO_LABELS[g.categoria]||g.categoria}</td>
+      <td class="mono">${fmt(g.valor)}</td>
+      <td class="mono">${g.desde}</td>
+      <td>${g.hasta ? `Desactivado desde ${g.hasta}` : `<span style="color:var(--verde);">Activo</span>`}</td>
+      <td style="text-align:right;">
+        ${g.hasta ? "" : `<button class="btn secondary small" onclick="desactivarGastoFijo('${g.id}')">Desactivar</button>`}
+      </td>
+    </tr>`).join("");
+}
+document.getElementById("form-gasto-fijo").addEventListener("submit", async e=>{
+  e.preventDefault();
+  const concepto = document.getElementById("gf-concepto").value.trim();
+  const categoria = document.getElementById("gf-categoria").value;
+  const valor = Number(document.getElementById("gf-valor").value);
+  const desdeMes = document.getElementById("gf-desde").value; // YYYY-MM
+  if(!concepto || !valor || !desdeMes){ toast("Completa concepto, valor y desde qué mes aplica"); return; }
+  const gasto = { id: uid(), concepto, categoria, valor, desde: desdeMes+"-01", hasta: null };
+  const ok = await guardarGastoFijo(gasto);
+  if(!ok) return;
+  db.gastosFijos.push(gasto);
+  document.getElementById("form-gasto-fijo").reset();
+  toast(`Gasto fijo "${concepto}" agregado — aplicará cada mes desde ${desdeMes}`);
+  renderAll();
+});
+async function desactivarGastoFijo(id){
+  const g = db.gastosFijos.find(x=>x.id===id); if(!g) return;
+  if(!confirm(`¿Desactivar "${g.concepto}"? Dejará de sumarse a los balances desde el mes actual en adelante (los meses pasados no cambian).`)) return;
+  const periodo = periodoMesActual();
+  g.hasta = periodo.inicio.toISOString().slice(0,10);
+  const ok = await guardarGastoFijo(g);
+  if(!ok) return;
+  toast(`"${g.concepto}" desactivado`);
+  renderAll();
+}
+
+document.getElementById("bal-btn-pdf").addEventListener("click", generarInformeFinancieroPDF);
+function generarInformeFinancieroPDF(){
+  const b = window.__ultimoBalance;
+  if(!b){ toast("Espera a que cargue el balance del mes"); return; }
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({unit:"pt", format:"a4"});
+  const mx = 40, ancho = 595;
+  doc.setFillColor(28,31,34); doc.rect(0,0,ancho,66,"F");
+  doc.setFillColor(255,200,46); doc.rect(0,66,ancho,4,"F");
+  doc.setTextColor(255,255,255); doc.setFont("helvetica","bold"); doc.setFontSize(16);
+  doc.text("GÓMEZ NIETO", mx, 32);
+  doc.setFont("helvetica","normal"); doc.setFontSize(9.5); doc.setTextColor(200,203,206);
+  doc.text("Informe financiero mensual — uso interno / confidencial", mx, 48);
+  doc.text(b.periodo.label.charAt(0).toUpperCase()+b.periodo.label.slice(1), ancho-mx, 48, {align:"right"});
+  doc.setTextColor(0,0,0);
+
+  let y = 100;
+  doc.setFont("helvetica","bold"); doc.setFontSize(11);
+  doc.text("Resumen del mes", mx, y); y += 18;
+  doc.autoTable({
+    startY: y,
+    margin: {left: mx, right: mx},
+    theme: "plain",
+    styles: {fontSize: 10, cellPadding: 4},
+    body: [
+      ["Ingresos (neto parqueadero por vehículos que salieron)", fmt(b.ingresos)],
+      ["Egresos variables (Pagos y Gastos)", fmt(b.egresosVariables)],
+      ["Egresos fijos (arriendo, nómina, servicios, etc.)", fmt(b.egresosFijos)],
+      ["Total egresos", fmt(b.egresos)],
+      [b.resultado>=0 ? "Utilidad del mes" : "Pérdida del mes", (b.resultado>=0?"":"-")+fmt(Math.abs(b.resultado))],
+    ],
+    columnStyles: {0:{cellWidth: 340}, 1:{halign:"right", fontStyle:"bold"}},
+  });
+  y = doc.lastAutoTable.finalY + 24;
+
+  doc.setFont("helvetica","bold"); doc.setFontSize(11);
+  doc.text("Egresos por categoría", mx, y); y += 6;
+  const filasCategoria = Object.keys(b.porCategoria).map(c=>[CATEGORIA_GASTO_LABELS[c]||c, fmt(b.porCategoria[c])]);
+  doc.autoTable({
+    startY: y+10,
+    margin: {left: mx, right: mx},
+    head: [["Categoría","Valor"]],
+    body: filasCategoria.length ? filasCategoria : [["Sin egresos este mes",""]],
+    headStyles: {fillColor:[28,31,34]},
+    columnStyles: {1:{halign:"right"}},
+    styles: {fontSize: 9.5},
+  });
+  y = doc.lastAutoTable.finalY + 24;
+
+  if(b.fijosDelMes.length){
+    if(y > 700){ doc.addPage(); y = 60; }
+    doc.setFont("helvetica","bold"); doc.setFontSize(11);
+    doc.text("Detalle de gastos fijos aplicados este mes", mx, y); y += 6;
+    doc.autoTable({
+      startY: y+10,
+      margin: {left: mx, right: mx},
+      head: [["Concepto","Categoría","Valor"]],
+      body: b.fijosDelMes.map(g=>[g.concepto, CATEGORIA_GASTO_LABELS[g.categoria]||g.categoria, fmt(g.valor)]),
+      headStyles: {fillColor:[28,31,34]},
+      columnStyles: {2:{halign:"right"}},
+      styles: {fontSize: 9.5},
+    });
+    y = doc.lastAutoTable.finalY + 24;
+  }
+
+  if(b.gastosMes.length){
+    if(y > 680){ doc.addPage(); y = 60; }
+    doc.setFont("helvetica","bold"); doc.setFontSize(11);
+    doc.text("Detalle de gastos variables del mes (Pagos y Gastos)", mx, y); y += 6;
+    doc.autoTable({
+      startY: y+10,
+      margin: {left: mx, right: mx},
+      head: [["Fecha","Categoría","Descripción","Valor"]],
+      body: b.gastosMes.map(g=>[new Date(g.fecha).toLocaleDateString("es-CO"), CATEGORIA_GASTO_LABELS[g.categoria]||g.categoria, g.descripcion||"—", fmt(g.valor)]),
+      headStyles: {fillColor:[28,31,34]},
+      columnStyles: {3:{halign:"right"}},
+      styles: {fontSize: 8.5},
+    });
+  }
+
+  const nombreMes = b.periodo.label.replace(/\s+/g,"_");
+  doc.save(`informe_financiero_${nombreMes}.pdf`);
 }
 
 /* ---------- Render general ---------- */
