@@ -142,10 +142,10 @@
       <div class="kpi a-verde"><div class="num mono" id="kpi-recaudo-hoy">$0</div><div class="lbl">Recaudo del día</div></div>
     </div>
     <div class="grid grid-4" style="margin-bottom:16px;">
-      <div class="kpi a-azul"><div class="num mono" id="kpi-secretaria">$0</div><div class="lbl">Acumulado Secretaría (10%) — histórico</div></div>
-      <div class="kpi a-morado"><div class="num mono" id="kpi-terceros">$0</div><div class="lbl">Pagos a terceros (20%) — histórico</div></div>
-      <div class="kpi a-naranja"><div class="num mono" id="kpi-grua-neta">$0</div><div class="lbl">Neto final grúa acumulado (histórico)</div></div>
-      <div class="kpi a-verde"><div class="num mono" id="kpi-parqueo-neto">$0</div><div class="lbl">Neto final parqueadero acumulado (histórico)</div></div>
+      <div class="kpi a-azul"><div class="num mono" id="kpi-secretaria">$0</div><div class="lbl">Acumulado Secretaría (10%) — este mes</div></div>
+      <div class="kpi a-morado"><div class="num mono" id="kpi-terceros">$0</div><div class="lbl">Pagos a terceros (20%) — este mes</div></div>
+      <div class="kpi a-naranja"><div class="num mono" id="kpi-grua-neta">$0</div><div class="lbl">Neto final grúa acumulado (este mes)</div></div>
+      <div class="kpi a-verde"><div class="num mono" id="kpi-parqueo-neto">$0</div><div class="lbl">Neto final parqueadero acumulado (este mes)</div></div>
     </div>
     <div class="grid grid-2">
       <div class="card"><h3>Últimos movimientos</h3><div id="ultimos-movimientos"><div class="empty subtle">Sin movimientos aún</div></div></div>
@@ -346,6 +346,23 @@
         <div class="kpi a-amarillo"><div class="num mono" id="ter-total">$0</div><div class="lbl">Total neto a pagar</div></div>
       </div>
       <button class="btn" id="btn-pdf-terceros" style="width:100%;">Descargar informe de operadores (PDF)</button>
+    </div>
+
+    <div class="card" style="margin-top:16px;">
+      <div class="flex-between">
+        <h3 style="margin:0;">Informe 4 — Histórico mensual por concepto</h3>
+        <div style="display:flex; gap:8px;">
+          <button class="btn secondary small" id="btn-excel-historico-mensual">Descargar (Excel)</button>
+          <button class="btn secondary small" id="btn-pdf-historico-mensual">Descargar (PDF)</button>
+        </div>
+      </div>
+      <p class="subtle" style="margin:6px 0 14px 0;">Mes a mes, desde que empezó a usarse la app: cuánto se generó para Secretaría, Pagos a terceros, cada operador de grúa y el neto del parqueadero — todo calculado sobre los vehículos que ya salieron.</p>
+      <div style="overflow-x:auto;">
+        <table id="tabla-historico-mensual" style="width:100%; border-collapse:collapse; font-size:13px;">
+          <thead></thead>
+          <tbody></tbody>
+        </table>
+      </div>
     </div>
     </div>
   </div>
@@ -2085,7 +2102,14 @@ function renderDashboard(){
   const recaudoHoy = salidosHoy.reduce((s,v)=>s+calcularCostos(v).total,0);
   const deudaPatio = patio.reduce((s,v)=>s+calcularCostos(v).total,0);
 
-  const salidosAll = db.vehiculos.filter(v=>v.estado==="salido");
+  const ahoraMes = new Date();
+  const anioActual = ahoraMes.getFullYear();
+  const mesActual = ahoraMes.getMonth();
+  const salidosAll = db.vehiculos.filter(v=>{
+    if(v.estado!=="salido" || !v.salidaFecha) return false;
+    const f = new Date(v.salidaFecha);
+    return f.getFullYear()===anioActual && f.getMonth()===mesActual;
+  });
   let secretariaHist=0, tercerosHist=0, gruaHist=0, parqueoHist=0;
   salidosAll.forEach(v=>{ const c=calcularCostos(v); secretariaHist+=c.secretaria; tercerosHist+=c.pagosTerceros; gruaHist+=c.gruaNeta; parqueoHist+=c.parqueoNeto; });
 
@@ -2116,6 +2140,119 @@ function renderDashboard(){
     </div>`;
   }).join("") : `<div class="empty subtle">Nada pendiente</div>`;
 }
+
+/* ---------- INFORMES: Informe 4 - histórico mensual por concepto ---------- */
+const MESES_NOMBRE = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
+function calcularHistoricoMensual(){
+  const meses = {}; // "2026-08" -> {anio, mes, secretaria, terceros, parqueoNeto, gruaPorEmpresa:{empresaId:valor}}
+  db.vehiculos.filter(v=>v.estado==="salido" && v.salidaFecha).forEach(v=>{
+    const f = new Date(v.salidaFecha);
+    if(isNaN(f)) return;
+    const anio = f.getFullYear(), mes = f.getMonth();
+    const key = anio + "-" + String(mes+1).padStart(2,"0");
+    if(!meses[key]) meses[key] = { anio, mes, secretaria:0, terceros:0, parqueoNeto:0, gruaPorEmpresa:{} };
+    const c = calcularCostos(v);
+    meses[key].secretaria += c.secretaria;
+    meses[key].terceros += c.pagosTerceros;
+    meses[key].parqueoNeto += c.parqueoNeto;
+    if(v.operadorId){
+      meses[key].gruaPorEmpresa[v.operadorId] = (meses[key].gruaPorEmpresa[v.operadorId]||0) + c.gruaNeta;
+    }
+  });
+  // Ordenado del mes más reciente al más antiguo
+  return Object.values(meses).sort((a,b)=> (b.anio-a.anio) || (b.mes-a.mes));
+}
+function renderHistoricoMensual(){
+  const filas = calcularHistoricoMensual();
+  const thead = document.querySelector("#tabla-historico-mensual thead");
+  const tbody = document.querySelector("#tabla-historico-mensual tbody");
+  const colsEmpresas = EMPRESAS_OPERADORAS;
+  thead.innerHTML = `<tr style="border-bottom:1px solid var(--linea); text-align:left;">
+    <th style="padding:8px 6px;">Mes</th>
+    <th style="padding:8px 6px;">Secretaría (10%)</th>
+    <th style="padding:8px 6px;">Pagos a terceros (20%)</th>
+    ${colsEmpresas.map(e=>`<th style="padding:8px 6px;">Neto grúa — ${e.nombre}</th>`).join("")}
+    <th style="padding:8px 6px;">Neto parqueadero</th>
+    <th style="padding:8px 6px;">Total generado</th>
+  </tr>`;
+  if(!filas.length){
+    tbody.innerHTML = `<tr><td colspan="${4+colsEmpresas.length}" class="subtle" style="padding:14px 6px;">Todavía no hay vehículos con salida registrada.</td></tr>`;
+    return filas;
+  }
+  tbody.innerHTML = filas.map(m=>{
+    const totalGrua = colsEmpresas.reduce((s,e)=> s + (m.gruaPorEmpresa[e.id]||0), 0);
+    const totalMes = m.secretaria + m.terceros + totalGrua + m.parqueoNeto;
+    return `<tr style="border-bottom:1px solid var(--linea);">
+      <td style="padding:8px 6px; font-weight:600;">${MESES_NOMBRE[m.mes]} ${m.anio}</td>
+      <td style="padding:8px 6px;">${fmt(m.secretaria)}</td>
+      <td style="padding:8px 6px;">${fmt(m.terceros)}</td>
+      ${colsEmpresas.map(e=>`<td style="padding:8px 6px;">${fmt(m.gruaPorEmpresa[e.id]||0)}</td>`).join("")}
+      <td style="padding:8px 6px;">${fmt(m.parqueoNeto)}</td>
+      <td style="padding:8px 6px; font-weight:700;">${fmt(totalMes)}</td>
+    </tr>`;
+  }).join("");
+  return filas;
+}
+document.getElementById("btn-excel-historico-mensual").addEventListener("click", ()=>{
+  const filas = calcularHistoricoMensual();
+  if(!filas.length){ toast("No hay vehículos con salida registrada todavía"); return; }
+  const data = filas.map(m=>{
+    const fila = {
+      "Mes": `${MESES_NOMBRE[m.mes]} ${m.anio}`,
+      "Secretaría (10%)": Math.round(m.secretaria),
+      "Pagos a terceros (20%)": Math.round(m.terceros),
+    };
+    EMPRESAS_OPERADORAS.forEach(e=>{ fila[`Neto grúa - ${e.nombre}`] = Math.round(m.gruaPorEmpresa[e.id]||0); });
+    fila["Neto parqueadero"] = Math.round(m.parqueoNeto);
+    const totalGrua = EMPRESAS_OPERADORAS.reduce((s,e)=> s + (m.gruaPorEmpresa[e.id]||0), 0);
+    fila["Total generado"] = Math.round(m.secretaria + m.terceros + totalGrua + m.parqueoNeto);
+    return fila;
+  });
+  const ws = XLSX.utils.json_to_sheet(data);
+  ws["!cols"] = Object.keys(data[0]).map(()=>({wch:20}));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Histórico mensual");
+  XLSX.writeFile(wb, "historico_mensual_gomez_nieto.xlsx");
+});
+document.getElementById("btn-pdf-historico-mensual").addEventListener("click", ()=>{
+  const filas = calcularHistoricoMensual();
+  if(!filas.length){ toast("No hay vehículos con salida registrada todavía"); return; }
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({unit:"pt", format:"a4", orientation:"landscape"});
+  const ancho = doc.internal.pageSize.getWidth();
+  const mx = 32;
+  doc.setFillColor(28,31,34); doc.rect(0,0,ancho,60,"F");
+  doc.setFillColor(255,200,46); doc.rect(0,60,ancho,4,"F");
+  doc.setTextColor(255,255,255); doc.setFont("helvetica","bold"); doc.setFontSize(15);
+  doc.text("GÓMEZ NIETO", mx, 28);
+  doc.setFont("helvetica","normal"); doc.setFontSize(9.5); doc.setTextColor(200,203,206);
+  doc.text("Histórico mensual por concepto — Secretaría, Pagos a terceros, operadores de grúa y parqueadero", mx, 44);
+  doc.setTextColor(0,0,0);
+
+  const head = [["Mes","Secretaría (10%)","Pagos a terceros (20%)", ...EMPRESAS_OPERADORAS.map(e=>`Neto grúa — ${e.nombre}`), "Neto parqueadero", "Total generado"]];
+  const body = filas.map(m=>{
+    const totalGrua = EMPRESAS_OPERADORAS.reduce((s,e)=> s + (m.gruaPorEmpresa[e.id]||0), 0);
+    const totalMes = m.secretaria + m.terceros + totalGrua + m.parqueoNeto;
+    return [
+      `${MESES_NOMBRE[m.mes]} ${m.anio}`,
+      fmt(m.secretaria),
+      fmt(m.terceros),
+      ...EMPRESAS_OPERADORAS.map(e=>fmt(m.gruaPorEmpresa[e.id]||0)),
+      fmt(m.parqueoNeto),
+      fmt(totalMes),
+    ];
+  });
+  doc.autoTable({
+    startY: 84,
+    margin: {left:mx, right:mx},
+    head, body,
+    theme: "striped",
+    styles: { font:"helvetica", fontSize:9, cellPadding:6, textColor:[30,30,30], lineColor:[225,225,225], lineWidth:0.4 },
+    headStyles: { fillColor:[28,31,34], textColor:255, fontStyle:"bold", fontSize:9 },
+    alternateRowStyles: { fillColor:[244,245,246] },
+  });
+  doc.save("historico_mensual_gomez_nieto.pdf");
+});
 
 /* ---------- INFORMES: utilidades de fecha (mes / semana dentro del mes) ---------- */
 const MESES_ES = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
@@ -2239,6 +2376,7 @@ function renderInformes(){
   document.getElementById("inf-comparendo").textContent = comparendo;
 
   renderInformeSecretaria();
+  renderHistoricoMensual();
   renderInformeTerceros();
 }
 
